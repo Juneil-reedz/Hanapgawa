@@ -1,0 +1,335 @@
+<ion-header [translucent]="true">
+  <ion-toolbar>
+    <ion-title>Dashboard</ion-title>
+    <ion-buttons slot="end">
+      <ion-button fill="clear" (click)="loadBookings()">
+        <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true" class="dashboard-content">
+  <div class="page-container">
+
+    <!-- Segment nav -->
+    <ion-segment [(ngModel)]="activeSegment" class="dash-segment">
+      <ion-segment-button value="incoming">
+        <ion-icon name="calendar-outline"></ion-icon>
+        <ion-label>Incoming</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="profile">
+        <ion-icon name="person-outline"></ion-icon>
+        <ion-label>My Profile</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="services">
+        <ion-icon name="briefcase-outline"></ion-icon>
+        <ion-label>Services</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="admin" *ngIf="isAdmin">
+        <ion-icon name="shield-checkmark-outline"></ion-icon>
+        <ion-label>Admin</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="queue">
+        <ion-icon name="cloud-upload-outline"></ion-icon>
+        <ion-label>Offline Queue</ion-label>
+        <ion-badge color="warning" *ngIf="pendingQueue.length">{{ pendingQueue.length }}</ion-badge>
+      </ion-segment-button>
+    </ion-segment>
+
+    <!-- ── INCOMING BOOKINGS ───────────────────────────────────────── -->
+    <div *ngIf="activeSegment === 'incoming'">
+
+      <!-- Stats row -->
+      <div class="stats-row" *ngIf="!loadingBookings && incomingBookings.length">
+        <div class="stat-card">
+          <span class="stat-value">{{ stats.total }}</span>
+          <span class="stat-label">Total</span>
+        </div>
+        <div class="stat-card warning">
+          <span class="stat-value">{{ stats.pending }}</span>
+          <span class="stat-label">Pending</span>
+        </div>
+        <div class="stat-card primary">
+          <span class="stat-value">{{ stats.accepted }}</span>
+          <span class="stat-label">Accepted</span>
+        </div>
+        <div class="stat-card success">
+          <span class="stat-value">{{ stats.completed }}</span>
+          <span class="stat-label">Completed</span>
+        </div>
+      </div>
+
+      <!-- Action message -->
+      <div class="action-banner" [class.success]="actionSuccess" [class.error]="!actionSuccess" *ngIf="actionMessage">
+        <ion-icon [name]="actionSuccess ? 'checkmark-circle-outline' : 'alert-circle-outline'"></ion-icon>
+        <span>{{ actionMessage }}</span>
+      </div>
+
+      <!-- Loading -->
+      <div class="booking-grid" *ngIf="loadingBookings">
+        <ion-card class="booking-card" *ngFor="let n of [1,2,3]">
+          <ion-card-content>
+            <ion-skeleton-text animated style="width:35%;height:14px;border-radius:6px;"></ion-skeleton-text>
+            <ion-skeleton-text animated style="width:65%;height:18px;margin-top:8px;border-radius:6px;"></ion-skeleton-text>
+            <ion-skeleton-text animated style="width:50%;height:14px;margin-top:6px;border-radius:6px;"></ion-skeleton-text>
+          </ion-card-content>
+        </ion-card>
+      </div>
+
+      <!-- Error -->
+      <div class="empty-state" *ngIf="!loadingBookings && bookingError">
+        <ion-icon name="cloud-offline-outline"></ion-icon>
+        <p>{{ bookingError }}</p>
+        <ion-button fill="outline" size="small" (click)="loadBookings()">Retry</ion-button>
+      </div>
+
+      <!-- Empty -->
+      <div class="empty-state" *ngIf="!loadingBookings && !bookingError && !incomingBookings.length">
+        <ion-icon name="calendar-outline"></ion-icon>
+        <h3>No incoming bookings yet</h3>
+        <p>Once clients book your services, they will appear here.</p>
+      </div>
+
+      <!-- Booking cards -->
+      <div class="booking-grid" *ngIf="!loadingBookings && incomingBookings.length">
+        <ion-card class="booking-card" *ngFor="let b of incomingBookings; trackBy: trackBooking">
+          <ion-card-content>
+            <div class="booking-header">
+              <ion-badge [color]="statusColors[b.status]">{{ b.status }}</ion-badge>
+              <span class="booking-date">{{ formatDate(b.createdAt) }}</span>
+            </div>
+
+            <h3 class="booking-service">{{ b.serviceCategory }}</h3>
+
+            <div class="meta-row">
+              <ion-icon name="location-outline"></ion-icon>
+              <span>{{ b.municipality }}</span>
+            </div>
+
+            <p class="booking-notes" *ngIf="b.notes">{{ b.notes }}</p>
+
+            <!-- Actions -->
+            <div class="action-row" *ngIf="bookingActions(b).length">
+              <ion-button size="small" *ngFor="let action of bookingActions(b)" (click)="updateStatus(b, action.status)">
+                {{ action.label }}
+              </ion-button>
+            </div>
+          </ion-card-content>
+        </ion-card>
+      </div>
+    </div>
+
+    <!-- ── PROVIDER PROFILE ───────────────────────────────────────── -->
+    <div *ngIf="activeSegment === 'profile'">
+      <div class="section-heading">
+        <h2>Provider Profile</h2>
+        <p>This profile appears in the Discover search results for clients.</p>
+      </div>
+
+      <div class="profile-form-card">
+        <div class="form-fields">
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Display name" labelPlacement="stacked" placeholder="e.g. Juan's Carpentry Services"
+              [(ngModel)]="profileForm.displayName"></ion-input>
+          </ion-item>
+
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Category" labelPlacement="stacked" placeholder="e.g. Carpentry, Plumbing, Tutoring"
+              [(ngModel)]="profileForm.category"></ion-input>
+          </ion-item>
+
+          <ion-item lines="none" class="field-item">
+            <ion-select label="Municipality" labelPlacement="stacked" interface="popover"
+              [(ngModel)]="profileForm.municipality">
+              <ion-select-option *ngFor="let m of municipalities" [value]="m">{{ m }}</ion-select-option>
+            </ion-select>
+          </ion-item>
+
+          <ion-item lines="none" class="field-item">
+            <ion-textarea label="Services (comma-separated)" labelPlacement="stacked"
+              placeholder="Furniture repair, Cabinet making, Wood flooring"
+              autoGrow="true" [(ngModel)]="servicesInput"></ion-textarea>
+          </ion-item>
+        </div>
+
+        <div class="profile-message" [class.success]="profileSuccess" [class.error]="!profileSuccess" *ngIf="profileMessage">
+          <ion-icon [name]="profileSuccess ? 'checkmark-circle-outline' : 'alert-circle-outline'"></ion-icon>
+          <span>{{ profileMessage }}</span>
+        </div>
+
+        <ion-button expand="block" color="primary" [disabled]="savingProfile" (click)="saveProfile()">
+          <ion-spinner slot="start" name="crescent" *ngIf="savingProfile"></ion-spinner>
+          Save Provider Profile
+        </ion-button>
+
+        <p class="note" *ngIf="user?.status !== 'approved'">
+          Your account needs admin approval before your profile appears in search results.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── OFFLINE QUEUE ──────────────────────────────────────────── -->
+    <div *ngIf="activeSegment === 'services'">
+      <div class="section-heading">
+        <h2>Service Listing</h2>
+        <p>Publish a detailed service card with price, duration, and requirements.</p>
+      </div>
+
+      <div class="profile-form-card">
+        <div class="form-fields">
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Title" labelPlacement="stacked" [(ngModel)]="serviceForm.title"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Category" labelPlacement="stacked" [(ngModel)]="serviceForm.category"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-select label="Municipality" labelPlacement="stacked" interface="popover" [(ngModel)]="serviceForm.municipality">
+              <ion-select-option *ngFor="let m of municipalities" [value]="m">{{ m }}</ion-select-option>
+            </ion-select>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Estimated duration" labelPlacement="stacked" [(ngModel)]="serviceForm.estimatedDuration"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Min price" type="number" labelPlacement="stacked" [(ngModel)]="serviceForm.priceMin"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Max price" type="number" labelPlacement="stacked" [(ngModel)]="serviceForm.priceMax"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-textarea label="Description" labelPlacement="stacked" autoGrow="true" [(ngModel)]="serviceForm.description"></ion-textarea>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Requirements (comma-separated)" labelPlacement="stacked" [(ngModel)]="requirementsInput"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Availability (comma-separated)" labelPlacement="stacked" [(ngModel)]="availabilityInput"></ion-input>
+          </ion-item>
+          <ion-item lines="none" class="field-item">
+            <ion-input label="Media image URL" labelPlacement="stacked" [(ngModel)]="mediaUrl"></ion-input>
+          </ion-item>
+          <div class="media-picker">
+            <p>Add service photo</p>
+            <input type="file" accept="image/*" (change)="onServicePhotoSelected($event)" />
+            <div class="media-preview" *ngIf="serviceMediaPreview">
+              <img [src]="serviceMediaPreview" alt="Service listing preview" />
+              <ion-button fill="clear" color="danger" size="small" (click)="removeServicePhoto()">Remove photo</ion-button>
+            </div>
+          </div>
+        </div>
+
+        <ion-button expand="block" color="secondary" [disabled]="savingService" (click)="saveService()">
+          <ion-spinner slot="start" name="crescent" *ngIf="savingService"></ion-spinner>
+          Publish Service Listing
+        </ion-button>
+      </div>
+    </div>
+
+    <div *ngIf="activeSegment === 'admin' && isAdmin">
+      <div class="section-heading">
+        <h2>Admin Console</h2>
+        <p>Approve providers, manage categories, and resolve disputes.</p>
+      </div>
+
+      <div class="action-banner" *ngIf="adminMessage">
+        <ion-icon name="information-circle-outline"></ion-icon>
+        <span>{{ adminMessage }}</span>
+      </div>
+
+      <div class="booking-grid">
+        <ion-card class="booking-card" *ngFor="let provider of adminProviders">
+          <ion-card-content>
+            <h3 class="booking-service">{{ provider.fullName || provider.email }}</h3>
+            <p class="booking-notes">{{ provider.role }} • {{ provider.status }}</p>
+            <div class="action-row">
+              <ion-button size="small" color="success" (click)="updateProviderApproval(provider.id, 'approved')">Approve</ion-button>
+              <ion-button size="small" color="warning" (click)="updateProviderApproval(provider.id, 'pending')">Pending</ion-button>
+              <ion-button size="small" color="danger" (click)="updateProviderApproval(provider.id, 'rejected')">Reject</ion-button>
+            </div>
+          </ion-card-content>
+        </ion-card>
+      </div>
+
+      <div class="profile-form-card">
+        <h3>Create Category</h3>
+        <div class="form-fields">
+          <ion-item lines="none" class="field-item"><ion-input label="Name" labelPlacement="stacked" [(ngModel)]="categoryForm.name"></ion-input></ion-item>
+          <ion-item lines="none" class="field-item"><ion-input label="Icon" labelPlacement="stacked" [(ngModel)]="categoryForm.icon"></ion-input></ion-item>
+          <ion-item lines="none" class="field-item"><ion-input label="Description" labelPlacement="stacked" [(ngModel)]="categoryForm.description"></ion-input></ion-item>
+        </div>
+        <ion-button expand="block" (click)="createCategory()">Add Category</ion-button>
+      </div>
+
+      <div class="booking-grid">
+        <ion-card class="booking-card" *ngFor="let report of adminReports">
+          <ion-card-content>
+            <h3 class="booking-service">{{ report.reason }}</h3>
+            <p class="booking-notes">{{ report.details }}</p>
+            <div class="action-row">
+              <ion-button size="small" color="success" (click)="resolveReport(report.id, 'resolved')">Resolve</ion-button>
+              <ion-button size="small" color="medium" (click)="resolveReport(report.id, 'dismissed')">Dismiss</ion-button>
+            </div>
+          </ion-card-content>
+        </ion-card>
+      </div>
+    </div>
+
+    <div *ngIf="activeSegment === 'queue'">
+      <div class="section-heading">
+        <h2>Offline Booking Queue</h2>
+        <p>Bookings saved locally while offline. Sync when you have a connection.</p>
+      </div>
+
+      <!-- Sync result -->
+      <div class="action-banner success" *ngIf="syncResult">
+        <ion-icon name="checkmark-circle-outline"></ion-icon>
+        <span>{{ syncResult }}</span>
+      </div>
+
+      <!-- Empty queue -->
+      <div class="empty-state" *ngIf="!pendingQueue.length">
+        <ion-icon name="cloud-done-outline"></ion-icon>
+        <h3>Queue is empty</h3>
+        <p>All bookings have been synced to the server.</p>
+      </div>
+
+      <!-- Queued items -->
+      <div class="booking-grid" *ngIf="pendingQueue.length">
+        <ion-card class="booking-card queued-card" *ngFor="let q of pendingQueue; trackBy: trackQueued">
+          <ion-card-content>
+            <div class="booking-header">
+              <ion-badge color="warning">offline</ion-badge>
+              <span class="booking-date">{{ formatDate(q.queuedAt) }}</span>
+            </div>
+
+            <h3 class="booking-service">{{ q.payload.serviceCategory }}</h3>
+
+            <div class="meta-row">
+              <ion-icon name="location-outline"></ion-icon>
+              <span>{{ q.payload.municipality }}</span>
+            </div>
+
+            <p class="booking-notes" *ngIf="q.payload.notes">{{ q.payload.notes }}</p>
+
+            <div class="action-row">
+              <ion-button size="small" color="danger" fill="outline" (click)="removeFromQueue(q.id)">
+                <ion-icon slot="start" name="trash-outline"></ion-icon>
+                Remove
+              </ion-button>
+            </div>
+          </ion-card-content>
+        </ion-card>
+      </div>
+
+      <!-- Sync button -->
+      <ion-button expand="block" color="primary" [disabled]="syncing || !pendingQueue.length" (click)="syncQueue()" class="sync-btn">
+        <ion-spinner slot="start" name="crescent" *ngIf="syncing"></ion-spinner>
+        <ion-icon slot="start" name="cloud-upload-outline" *ngIf="!syncing"></ion-icon>
+        Sync {{ pendingQueue.length }} Pending Booking{{ pendingQueue.length === 1 ? '' : 's' }}
+      </ion-button>
+    </div>
+
+  </div>
+</ion-content>

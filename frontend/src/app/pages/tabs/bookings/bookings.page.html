@@ -1,0 +1,385 @@
+<ion-header [translucent]="true">
+  <ion-toolbar>
+    <ion-title>My Bookings</ion-title>
+    <ion-buttons slot="end">
+      <ion-button fill="clear" (click)="activeSegment === 'orders' ? loadBookings() : loadConversations()">
+        <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true" class="bookings-content">
+  <ion-refresher slot="fixed" (ionRefresh)="loadBookings(); loadConversations(); $event.target.complete()">
+    <ion-refresher-content></ion-refresher-content>
+  </ion-refresher>
+
+  <div class="page-container">
+    <ion-segment [(ngModel)]="activeSegment" class="dash-segment">
+      <ion-segment-button value="orders">
+        <ion-icon name="list-outline"></ion-icon>
+        <ion-label>Orders</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="inbox">
+        <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
+        <ion-label>Inbox</ion-label>
+      </ion-segment-button>
+    </ion-segment>
+
+    <!-- ══ ORDERS ═══════════════════════════════════════════════════════ -->
+    <ng-container *ngIf="activeSegment === 'orders'">
+      <div class="booking-grid" *ngIf="loading">
+        <ion-card class="booking-card" *ngFor="let n of [1,2,3,4,5,6]">
+          <ion-card-content>
+            <ion-skeleton-text animated style="width: 30%; height: 14px; border-radius: 6px;"></ion-skeleton-text>
+            <ion-skeleton-text animated style="width: 60%; height: 18px; margin-top: 8px; border-radius: 6px;"></ion-skeleton-text>
+            <ion-skeleton-text animated style="width: 45%; height: 14px; margin-top: 6px; border-radius: 6px;"></ion-skeleton-text>
+          </ion-card-content>
+        </ion-card>
+      </div>
+
+      <div class="empty-state" *ngIf="!loading && errorMessage">
+        <ion-icon name="cloud-offline-outline"></ion-icon>
+        <p>{{ errorMessage }}</p>
+        <ion-button fill="outline" size="small" (click)="loadBookings()">Retry</ion-button>
+      </div>
+
+      <div class="empty-state" *ngIf="!loading && !errorMessage && !bookings.length">
+        <ion-icon name="calendar-outline"></ion-icon>
+        <h3>No bookings yet</h3>
+        <p>Find a provider in Discover and send your first booking request.</p>
+      </div>
+
+      <div class="booking-grid" *ngIf="!loading && bookings.length">
+        <ion-card class="booking-card" *ngFor="let b of bookings; trackBy: trackBooking" (click)="openBookingDetail(b)">
+          <ion-card-content>
+            <div class="booking-header">
+              <ion-badge [color]="statusColors[b.status]">{{ b.status }}</ion-badge>
+              <span class="booking-date">{{ formatDate(b.createdAt) }}</span>
+            </div>
+
+            <h3 class="booking-service">{{ b.serviceCategory }}</h3>
+
+            <div class="booking-meta">
+              <div class="meta-item">
+                <ion-icon name="location-outline"></ion-icon>
+                <span>{{ b.municipality }}</span>
+              </div>
+              <div class="meta-item">
+                <ion-icon name="calendar-outline"></ion-icon>
+                <span>{{ formatSchedule(b.scheduledAt) }}</span>
+              </div>
+            </div>
+
+            <p class="booking-notes" *ngIf="b.notes">{{ b.notes }}</p>
+
+            <div class="action-row" *ngIf="getActions(b).length">
+              <ion-button size="small" *ngFor="let action of getActions(b)" (click)="$event.stopPropagation(); updateStatus(b, action.status)">
+                {{ action.label }}
+              </ion-button>
+            </div>
+
+            <div class="rate-row" *ngIf="canReview(b)">
+              <ion-button size="small" fill="outline" color="warning" (click)="$event.stopPropagation(); openReview(b)">
+                <ion-icon slot="start" name="star-outline"></ion-icon>
+                Rate Provider
+              </ion-button>
+            </div>
+
+            <div class="rated-badge" *ngIf="currentUser?.role === 'client' && b.status === 'completed' && reviewedBookingIds.has(b.id)">
+              <ion-icon name="checkmark-circle-outline"></ion-icon>
+              <span>Review submitted</span>
+            </div>
+          </ion-card-content>
+        </ion-card>
+      </div>
+    </ng-container>
+
+    <!-- ══ INBOX ═════════════════════════════════════════════════════════ -->
+    <ng-container *ngIf="activeSegment === 'inbox'">
+
+      <!-- Compose button (clients only) -->
+      <div class="inbox-toolbar" *ngIf="isClient">
+        <p class="inbox-hint">Messages with service providers</p>
+        <ion-button size="small" (click)="openCompose()">
+          <ion-icon slot="start" name="create-outline"></ion-icon>
+          New Message
+        </ion-button>
+      </div>
+      <div class="inbox-toolbar" *ngIf="!isClient">
+        <p class="inbox-hint">Clients will message you here when they want to discuss your services.</p>
+      </div>
+
+      <!-- Loading -->
+      <div class="conv-skeleton" *ngIf="loadingInbox">
+        <div class="conv-skel-item" *ngFor="let n of [1,2,3]">
+          <ion-skeleton-text animated style="width:44px;height:44px;border-radius:14px;flex-shrink:0;"></ion-skeleton-text>
+          <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+            <ion-skeleton-text animated style="width:50%;height:13px;border-radius:6px;"></ion-skeleton-text>
+            <ion-skeleton-text animated style="width:80%;height:11px;border-radius:6px;"></ion-skeleton-text>
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty -->
+      <div class="empty-state" *ngIf="!loadingInbox && inboxMessage && !conversations.length">
+        <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
+        <p>{{ inboxMessage }}</p>
+        <ion-button *ngIf="isClient" size="small" fill="outline" (click)="openCompose()">
+          <ion-icon slot="start" name="create-outline"></ion-icon>
+          New Message
+        </ion-button>
+      </div>
+
+      <!-- Conversation list -->
+      <div class="conv-list" *ngIf="!loadingInbox && conversations.length">
+        <div
+          class="conv-item"
+          *ngFor="let conv of conversations; trackBy: trackConversation"
+          (click)="openConversation(conv)"
+        >
+          <div class="conv-avatar">{{ otherPartyInitials(conv) }}</div>
+          <div class="conv-info">
+            <div class="conv-name-row">
+              <span class="conv-name">{{ otherPartyName(conv) }}</span>
+              <span class="conv-time">{{ timeAgo(conv.updatedAt) }}</span>
+            </div>
+            <p class="conv-preview">{{ conv.lastMessagePreview }}</p>
+          </div>
+          <ion-icon name="chevron-forward-outline" class="conv-chevron"></ion-icon>
+        </div>
+      </div>
+
+    </ng-container>
+  </div>
+</ion-content>
+
+<!-- ══ Chat Modal ════════════════════════════════════════════════════════ -->
+<ion-modal
+  [isOpen]="!!openChat"
+  [breakpoints]="[0, 1]"
+  [initialBreakpoint]="1"
+  (didDismiss)="closeChat()"
+>
+  <ng-template>
+    <ion-header>
+      <ion-toolbar>
+        <ion-buttons slot="start">
+          <ion-button fill="clear" (click)="closeChat()">
+            <ion-icon name="arrow-back-outline"></ion-icon>
+          </ion-button>
+        </ion-buttons>
+        <ion-title *ngIf="openChat">{{ otherPartyName(openChat) }}</ion-title>
+      </ion-toolbar>
+    </ion-header>
+
+    <ion-content #chatContent class="chat-content">
+      <!-- Loading -->
+      <div class="chat-loading" *ngIf="loadingMessages">
+        <ion-spinner name="crescent"></ion-spinner>
+        <span>Loading messages...</span>
+      </div>
+
+      <!-- Empty thread -->
+      <div class="chat-empty" *ngIf="!loadingMessages && !messages.length">
+        <ion-icon name="chatbubble-outline"></ion-icon>
+        <p>No messages yet. Say something!</p>
+      </div>
+
+      <!-- Messages -->
+      <div class="chat-messages" *ngIf="!loadingMessages && messages.length">
+        <div
+          class="chat-bubble-wrap"
+          *ngFor="let msg of messages; trackBy: trackMessage"
+          [class.mine]="msg.senderUserId === currentUser?.id"
+        >
+          <div class="chat-bubble">
+            <span>{{ msg.message }}</span>
+          </div>
+          <small class="chat-time">{{ formatTime(msg.createdAt) }}</small>
+        </div>
+      </div>
+    </ion-content>
+
+    <!-- Reply bar -->
+    <div class="reply-bar">
+      <div class="reply-error" *ngIf="sendError">
+        <ion-icon name="alert-circle-outline"></ion-icon>
+        {{ sendError }}
+      </div>
+      <div class="reply-input-row">
+        <ion-textarea
+          class="reply-textarea"
+          placeholder="Type a message..."
+          [(ngModel)]="replyDraft"
+          [autoGrow]="true"
+          [rows]="1"
+          (keydown)="onReplyKeydown($event)"
+        ></ion-textarea>
+        <ion-button
+          class="send-btn"
+          shape="round"
+          [disabled]="sendingReply || !replyDraft.trim()"
+          (click)="sendReply()"
+        >
+          <ion-icon slot="icon-only" [name]="sendingReply ? 'hourglass-outline' : 'send'"></ion-icon>
+        </ion-button>
+      </div>
+    </div>
+  </ng-template>
+</ion-modal>
+
+<!-- ══ Compose Modal ═════════════════════════════════════════════════════ -->
+<ion-modal
+  [isOpen]="showCompose"
+  [breakpoints]="[0, 0.65, 0.92]"
+  [initialBreakpoint]="0.65"
+  (didDismiss)="closeCompose()"
+>
+  <ng-template>
+    <ion-header>
+      <ion-toolbar>
+        <ion-title>New Message</ion-title>
+        <ion-buttons slot="end">
+          <ion-button fill="clear" (click)="closeCompose()">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </ion-buttons>
+      </ion-toolbar>
+    </ion-header>
+
+    <ion-content class="compose-content ion-padding">
+
+      <!-- Step 1: pick a contact -->
+      <ng-container *ngIf="!composePartner">
+        <p class="compose-label">Choose someone to message</p>
+
+        <div class="compose-loading" *ngIf="loadingPartners">
+          <ion-spinner name="crescent"></ion-spinner>
+          <span>Loading contacts...</span>
+        </div>
+
+        <div class="compose-empty" *ngIf="!loadingPartners && !bookingPartners.length">
+          <ion-icon name="people-outline"></ion-icon>
+          <p>No contacts yet. Book a service first to message a provider.</p>
+        </div>
+
+        <div class="contact-list" *ngIf="!loadingPartners && bookingPartners.length">
+          <div class="contact-item" *ngFor="let p of bookingPartners; trackBy: trackPartner" (click)="selectPartner(p)">
+            <div class="contact-avatar">{{ partnerInitials(p) }}</div>
+            <div class="contact-info">
+              <span class="contact-name">{{ p.name }}</span>
+              <span class="contact-sub">{{ p.category }}</span>
+            </div>
+            <ion-icon name="chevron-forward-outline" class="conv-chevron"></ion-icon>
+          </div>
+        </div>
+
+        <div class="compose-error" *ngIf="composeError">
+          <ion-icon name="alert-circle-outline"></ion-icon>
+          {{ composeError }}
+        </div>
+      </ng-container>
+
+      <!-- Step 2: write message -->
+      <ng-container *ngIf="composePartner">
+        <div class="compose-to-row">
+          <ion-button fill="clear" size="small" (click)="composePartner = null">
+            <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+          </ion-button>
+          <div class="compose-to-avatar">{{ partnerInitials(composePartner) }}</div>
+          <div class="compose-to-info">
+            <span class="compose-to-name">{{ composePartner.name }}</span>
+            <span class="compose-to-sub">{{ composePartner.category }}</span>
+          </div>
+        </div>
+
+        <ion-item lines="none" class="compose-field">
+          <ion-textarea
+            label="Message"
+            labelPlacement="stacked"
+            placeholder="Type your message here..."
+            autoGrow="true"
+            [rows]="4"
+            [(ngModel)]="composeDraft"
+          ></ion-textarea>
+        </ion-item>
+
+        <div class="compose-error" *ngIf="composeError">
+          <ion-icon name="alert-circle-outline"></ion-icon>
+          {{ composeError }}
+        </div>
+
+        <ion-button
+          expand="block"
+          color="primary"
+          [disabled]="sendingCompose || !composeDraft.trim()"
+          (click)="sendNewMessage()"
+        >
+          <ion-spinner slot="start" name="crescent" *ngIf="sendingCompose"></ion-spinner>
+          <ion-icon slot="start" name="send" *ngIf="!sendingCompose"></ion-icon>
+          Send Message
+        </ion-button>
+      </ng-container>
+
+    </ion-content>
+  </ng-template>
+</ion-modal>
+
+<!-- ══ Review Modal ══════════════════════════════════════════════════════ -->
+<ion-modal
+  [isOpen]="!!reviewingBooking"
+  [breakpoints]="[0, 0.55, 0.80]"
+  [initialBreakpoint]="0.55"
+  (didDismiss)="closeReview()"
+>
+  <ng-template>
+    <ion-header>
+      <ion-toolbar>
+        <ion-title>Rate Provider</ion-title>
+        <ion-buttons slot="end">
+          <ion-button fill="clear" (click)="closeReview()">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </ion-buttons>
+      </ion-toolbar>
+    </ion-header>
+
+    <ion-content class="review-sheet-content ion-padding">
+      <div class="review-body" *ngIf="reviewingBooking">
+        <p class="review-service-label">{{ reviewingBooking.serviceCategory }}</p>
+
+        <div class="star-picker">
+          <ion-icon
+            *ngFor="let s of stars"
+            [name]="reviewForm.rating >= s ? 'star' : 'star-outline'"
+            [class.filled]="reviewForm.rating >= s"
+            (click)="setRating(s)"
+          ></ion-icon>
+        </div>
+        <p class="star-hint" *ngIf="reviewForm.rating === 0">Tap a star to rate</p>
+        <p class="star-hint filled" *ngIf="reviewForm.rating > 0">{{ ['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent!'][reviewForm.rating] }}</p>
+
+        <ion-item lines="none" class="review-field">
+          <ion-textarea
+            label="Comment (optional)"
+            labelPlacement="stacked"
+            placeholder="Share your experience..."
+            autoGrow="true"
+            [(ngModel)]="reviewForm.comment"
+          ></ion-textarea>
+        </ion-item>
+
+        <div class="review-message" [class.success]="reviewSuccess" [class.error]="!reviewSuccess" *ngIf="reviewMessage">
+          <ion-icon [name]="reviewSuccess ? 'checkmark-circle-outline' : 'alert-circle-outline'"></ion-icon>
+          <span>{{ reviewMessage }}</span>
+        </div>
+
+        <ion-button expand="block" color="warning" [disabled]="submittingReview || reviewForm.rating === 0" (click)="submitReview()">
+          <ion-spinner slot="start" name="crescent" *ngIf="submittingReview"></ion-spinner>
+          Submit Review
+        </ion-button>
+      </div>
+    </ion-content>
+  </ng-template>
+</ion-modal>

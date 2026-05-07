@@ -1,0 +1,227 @@
+<ion-content [fullscreen]="true" class="profile-content" *ngIf="user">
+
+  <!-- ── Cover Banner ─────────────────────────────────────────────── -->
+  <div class="cover-banner">
+    <div class="cover-pattern"></div>
+    <div class="cover-actions">
+      <ion-button fill="clear" class="icon-btn" (click)="toggleSettings()">
+        <ion-icon [name]="showSettings ? 'close-outline' : 'settings-outline'"></ion-icon>
+      </ion-button>
+      <ion-button fill="clear" class="icon-btn danger-btn" (click)="logout()">
+        <ion-icon name="log-out-outline"></ion-icon>
+      </ion-button>
+    </div>
+  </div>
+
+  <div class="profile-body">
+
+    <!-- ── Avatar + Identity ─────────────────────────────────────── -->
+    <div class="identity-section">
+      <div class="avatar-wrap">
+        <div class="avatar">{{ initials }}</div>
+        <div class="online-dot" [class.approved]="isApproved"></div>
+      </div>
+
+      <div class="identity-info">
+        <h1 class="display-name">{{ user.fullName || 'No name set' }}</h1>
+        <p class="sub-line">{{ user.email }}</p>
+
+        <div class="badge-row">
+          <ion-badge [color]="roleColors[user.role]" class="role-badge">
+            <ion-icon [name]="roleIcons[user.role]"></ion-icon>
+            {{ roleLabels[user.role] }}
+          </ion-badge>
+          <ion-badge [color]="isApproved ? 'success' : 'warning'" class="status-badge">
+            {{ user.status || 'pending' }}
+          </ion-badge>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Stats Row ─────────────────────────────────────────────── -->
+    <div class="stats-strip">
+      <div class="stat-item">
+        <span class="stat-value">{{ bookingCount }}</span>
+        <span class="stat-label">Bookings</span>
+      </div>
+      <div class="stat-divider"></div>
+      <ng-container *ngIf="isProvider; else clientStat">
+        <div class="stat-item">
+          <span class="stat-value">{{ reviewCount }}</span>
+          <span class="stat-label">Reviews</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-value">
+            <ion-icon name="star" class="stat-star"></ion-icon>
+            {{ averageRating | number:'1.1-1' }}
+          </span>
+          <span class="stat-label">Rating</span>
+        </div>
+      </ng-container>
+      <ng-template #clientStat>
+        <div class="stat-item">
+          <span class="stat-value">Tawi-Tawi</span>
+          <span class="stat-label">Area</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-value">{{ roleLabels[user.role] }}</span>
+          <span class="stat-label">Account</span>
+        </div>
+      </ng-template>
+    </div>
+
+    <!-- ── Provider CTA ──────────────────────────────────────────── -->
+    <ion-button
+      *ngIf="isProvider"
+      expand="block"
+      fill="outline"
+      color="primary"
+      class="dashboard-btn"
+      (click)="goToDashboard()"
+    >
+      <ion-icon slot="start" name="grid-outline"></ion-icon>
+      Open Provider Dashboard
+    </ion-button>
+
+    <!-- ── Pending Notice ────────────────────────────────────────── -->
+    <div class="notice-card" *ngIf="isProvider && !isApproved">
+      <ion-icon name="hourglass-outline"></ion-icon>
+      <div>
+        <strong>Pending approval</strong>
+        <p>Your {{ user.role }} account is waiting for admin review. You can browse the app, but your profile won't appear in search until approved.</p>
+      </div>
+    </div>
+
+    <!-- ── Info Card ─────────────────────────────────────────────── -->
+    <div class="info-card">
+      <div class="info-row">
+        <div class="info-icon-wrap">
+          <ion-icon name="mail-outline"></ion-icon>
+        </div>
+        <div class="info-text">
+          <span>Email</span>
+          <strong>{{ user.email }}</strong>
+        </div>
+      </div>
+      <div class="info-divider"></div>
+      <div class="info-row">
+        <div class="info-icon-wrap">
+          <ion-icon [name]="roleIcons[user.role]"></ion-icon>
+        </div>
+        <div class="info-text">
+          <span>Account type</span>
+          <strong>{{ roleLabels[user.role] }}</strong>
+        </div>
+      </div>
+      <div class="info-divider"></div>
+      <div class="info-row">
+        <div class="info-icon-wrap" [class.approved]="isApproved">
+          <ion-icon [name]="isApproved ? 'checkmark-circle-outline' : 'ellipse-outline'"></ion-icon>
+        </div>
+        <div class="info-text">
+          <span>Status</span>
+          <strong [class.approved-text]="isApproved">{{ user.status || 'pending' }}</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Timeline Panel ─────────────────────────────────────────── -->
+    <div class="settings-panel" [class.open]="showTimeline">
+      <div class="settings-header" (click)="toggleTimeline()">
+        <span>
+          <ion-icon name="time-outline"></ion-icon>
+          My Activity Timeline
+        </span>
+        <ion-icon [name]="showTimeline ? 'chevron-up-outline' : 'chevron-down-outline'"></ion-icon>
+      </div>
+
+      <div class="settings-body timeline-body" *ngIf="showTimeline">
+        <div class="tl-loading" *ngIf="loadingTimeline">
+          <ion-spinner name="crescent"></ion-spinner>
+          <span>Loading activity...</span>
+        </div>
+
+        <div class="tl-empty" *ngIf="!loadingTimeline && !timelineEvents.length">
+          <ion-icon name="time-outline"></ion-icon>
+          <p>No activity yet. Start by booking a service or posting a job.</p>
+        </div>
+
+        <div class="tl-list" *ngIf="!loadingTimeline && timelineEvents.length">
+          <div class="tl-item" *ngFor="let event of timelineEvents; trackBy: trackTimeline">
+            <div class="tl-dot-col">
+              <div class="tl-dot" [attr.data-color]="timelineColor(event.type)">
+                <ion-icon [name]="timelineIcon(event.type)"></ion-icon>
+              </div>
+              <div class="tl-line"></div>
+            </div>
+            <div class="tl-content">
+              <div class="tl-title">{{ event.title }}</div>
+              <div class="tl-subtitle">{{ event.subtitle }}</div>
+              <div class="tl-footer">
+                <ion-badge [color]="timelineColor(event.type)" *ngIf="event.status" class="tl-badge">{{ event.status }}</ion-badge>
+                <span class="tl-time">{{ timeAgo(event.createdAt) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings Panel ────────────────────────────────────────── -->
+    <div class="settings-panel" [class.open]="showSettings">
+      <div class="settings-header" (click)="toggleSettings()">
+        <span>
+          <ion-icon name="settings-outline"></ion-icon>
+          Account Settings
+        </span>
+        <ion-icon [name]="showSettings ? 'chevron-up-outline' : 'chevron-down-outline'"></ion-icon>
+      </div>
+
+      <div class="settings-body" *ngIf="showSettings">
+        <p class="settings-note">Changes are saved locally on this device.</p>
+
+        <ion-item lines="none" class="sfield">
+          <ion-input label="Full name" labelPlacement="stacked" [(ngModel)]="settingsForm.fullName"></ion-input>
+        </ion-item>
+
+        <ion-item lines="none" class="sfield">
+          <ion-input label="Email" labelPlacement="stacked" type="email" [(ngModel)]="settingsForm.email"></ion-input>
+        </ion-item>
+
+        <ion-item lines="none" class="sfield">
+          <ion-select label="Default municipality" labelPlacement="stacked" interface="popover" [(ngModel)]="settingsForm.defaultMunicipality">
+            <ion-select-option value="">None</ion-select-option>
+            <ion-select-option *ngFor="let m of municipalities" [value]="m">{{ m }}</ion-select-option>
+          </ion-select>
+        </ion-item>
+
+        <ion-item lines="none" class="sfield toggle-field">
+          <ion-toggle [(ngModel)]="settingsForm.notifications" labelPlacement="start">
+            Booking notifications
+          </ion-toggle>
+        </ion-item>
+
+        <div class="settings-msg" [class.success]="settingsSuccess" [class.error]="!settingsSuccess" *ngIf="settingsMessage">
+          <ion-icon [name]="settingsSuccess ? 'checkmark-circle-outline' : 'alert-circle-outline'"></ion-icon>
+          <span>{{ settingsMessage }}</span>
+        </div>
+
+        <ion-button expand="block" color="primary" [disabled]="savingSettings" (click)="saveSettings()">
+          <ion-spinner slot="start" name="crescent" *ngIf="savingSettings"></ion-spinner>
+          Save Settings
+        </ion-button>
+      </div>
+    </div>
+
+    <!-- ── Sign Out ──────────────────────────────────────────────── -->
+    <ion-button expand="block" fill="outline" color="danger" class="signout-btn" (click)="logout()">
+      <ion-icon slot="start" name="log-out-outline"></ion-icon>
+      Sign Out
+    </ion-button>
+
+    <p class="app-version">HanapGawa v1.0 · Tawi-Tawi Service Marketplace</p>
+
+  </div>
+</ion-content>

@@ -1,0 +1,178 @@
+.onboarding-content {
+  --background: #1e1523;
+}
+
+.onboarding-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 64px 28px 48px;
+  gap: 44px;
+  position: relative;
+  overflow: hidden;
+
+  /* Animated gradient backdrop */
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(160deg, #1e1523 0%, #2e2035 30%, #574964 65%, #9F8383 100%);
+    background-size: 300% 300%;
+    animation: gradientShift 14s ease infinite;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  > * { position: relative; z-index: 1; }
+}
+
+.hero-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+  position: relative;
+
+  /* Floating orb — top right */
+  &::before {
+    content: '';
+    position: absolute;
+    width: 320px;
+    height: 320px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 218, 179, 0.13) 0%, transparent 65%);
+    top: -100px;
+    right: -100px;
+    animation: float 10s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  /* Floating orb — bottom left */
+  &::after {
+    content: '';
+    position: absolute;
+    width: 240px;
+    height: 240px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(200, 170, 170, 0.11) 0%, transparent 65%);
+    bottom: -80px;
+    left: -70px;
+    animation: float 13s ease-in-out infinite reverse;
+    pointer-events: none;
+  }
+}
+
+.logo-mark {
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #FFDAB3 0%, #f0c89a 100%);
+  color: #574964;
+  font-size: 28px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -1px;
+  animation: pulseGlow 4s ease-in-out infinite;
+  position: relative;
+  z-index: 1;
+}
+
+.app-name {
+  font-size: 38px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0;
+  letter-spacing: -1px;
+  animation: fadeUp 0.5s ease 0.1s both;
+}
+
+.tagline {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+  margin: 0;
+  animation: fadeUp 0.5s ease 0.2s both;
+}
+
+.features-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 18px;
+  padding: 16px 18px;
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  animation: fadeUp 0.5s ease both;
+
+  &:nth-child(1) { animation-delay: 0.15s; }
+  &:nth-child(2) { animation-delay: 0.25s; }
+  &:nth-child(3) { animation-delay: 0.35s; }
+  &:nth-child(4) { animation-delay: 0.45s; }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.13);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateX(4px);
+  }
+}
+
+.feature-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(255, 218, 179, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  ion-icon { font-size: 22px; color: #FFDAB3; }
+}
+
+.feature-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  strong { color: #fff; font-size: 15px; font-weight: 700; }
+  span { color: rgba(255, 255, 255, 0.65); font-size: 13px; line-height: 1.5; }
+}
+
+.cta-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  animation: fadeUp 0.5s ease 0.5s both;
+
+  ion-button {
+    --background: linear-gradient(135deg, #FFDAB3 0%, #f0c89a 100%);
+    --color: #574964;
+    --border-radius: 16px;
+    --box-shadow: 0 6px 28px rgba(255, 218, 179, 0.35);
+    font-weight: 800;
+    font-size: 16px;
+    height: 54px;
+  }
+
+  ion-button[fill='clear'] {
+    --color: rgba(255, 255, 255, 0.65);
+    height: 44px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
