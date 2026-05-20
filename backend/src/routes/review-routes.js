@@ -4,8 +4,7 @@ const { z } = require('zod');
 const { asyncHandler } = require('../lib/async-handler');
 const { HttpError } = require('../lib/http-error');
 const { authenticate } = require('../middleware/authenticate');
-const { authorizeRoles } = require('../middleware/authorize-roles');
-const { submitReview, getProviderReviews } = require('../services/review-service');
+const { submitReview, getProviderReviews, getReviewsForUser } = require('../services/review-service');
 
 const router = express.Router();
 
@@ -18,7 +17,6 @@ const createReviewSchema = z.object({
 router.post(
   '/',
   authenticate,
-  authorizeRoles('client', 'admin'),
   asyncHandler(async (req, res) => {
     const payload = createReviewSchema.safeParse(req.body);
 
@@ -31,7 +29,6 @@ router.post(
       reviewerUserId: req.auth.sub,
       rating: payload.data.rating,
       comment: payload.data.comment,
-      isAdmin: req.auth.role === 'admin',
     });
 
     res.status(201).json({ review });
@@ -48,6 +45,17 @@ router.get(
     }
 
     const data = await getProviderReviews(providerId.data);
+    res.json(data);
+  }),
+);
+
+// GET /reviews/user/:userId — reviews received by any user (provider or client)
+router.get(
+  '/user/:userId',
+  asyncHandler(async (req, res) => {
+    const userId = z.uuid().safeParse(req.params.userId);
+    if (!userId.success) throw new HttpError(400, 'Invalid user id.');
+    const data = await getReviewsForUser(userId.data);
     res.json(data);
   }),
 );

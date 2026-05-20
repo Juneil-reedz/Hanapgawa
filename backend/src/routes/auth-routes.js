@@ -8,6 +8,7 @@ const {
   loginUser,
   registerUser,
   resendVerificationCode,
+  signInWithGoogle,
   verifyEmail,
   verifyExternalToken,
 } = require('../services/auth-service');
@@ -17,7 +18,7 @@ const router = express.Router();
 const registerSchema = z.object({
   email: z.email(),
   password: z.string().min(8),
-  role: z.enum(['client', 'worker', 'agency', 'admin']).optional().default('client'),
+  role: z.enum(['user', 'client', 'worker', 'agency', 'admin']).optional().default('user'),
   fullName: z.string().min(2).max(120),
 });
 
@@ -33,6 +34,10 @@ const verifyEmailSchema = z.object({
 
 const resendVerificationSchema = z.object({
   email: z.email(),
+});
+
+const googleSignInSchema = z.object({
+  idToken: z.string().min(1),
 });
 
 router.post(
@@ -87,6 +92,20 @@ router.post(
     }
 
     const result = await loginUser(payload.data);
+    res.json(result);
+  }),
+);
+
+router.post(
+  '/google',
+  asyncHandler(async (req, res) => {
+    const payload = googleSignInSchema.safeParse(req.body);
+
+    if (!payload.success) {
+      throw new HttpError(400, 'Invalid Google sign-in payload.', payload.error.flatten());
+    }
+
+    const result = await signInWithGoogle(payload.data);
     res.json(result);
   }),
 );

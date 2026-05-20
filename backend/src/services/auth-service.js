@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 
 const { env } = require('../config/env');
@@ -10,10 +11,12 @@ const {
   findActiveEmailVerificationCode,
   findUserByEmail,
   markEmailVerified,
+  markUserEmailVerified,
 } = require('../repositories/user-repository');
 const { sendEmailVerificationCode } = require('./email-service');
 
 const VERIFICATION_CODE_TTL_MINUTES = 15;
+const googleClient = new OAuth2Client();
 
 function buildTokenPayload(user) {
   return {
@@ -106,6 +109,10 @@ async function loginUser({ email, password }) {
     throw new HttpError(403, 'Please verify your email before logging in.');
   }
 
+  if (['suspended', 'banned'].includes(user.status)) {
+    throw new HttpError(403, 'This account is not allowed to access HanapGawa.');
+  }
+
   return {
     user: buildPublicUser(user),
     token: signAccessToken(user),
@@ -164,6 +171,55 @@ async function verifyEmail({ email, code }) {
   };
 }
 
+async function signInWithGoogle({ idToken }) {
+  if (!env.googleClientId) {
+    throw new HttpError(503, 'Google Sign-In is not configured.');
+  }
+
+  let ticket;
+
+  try {
+    ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: env.googleClientId,
+    });
+  } catch {
+    throw new HttpError(401, 'Invalid Google sign-in token.');
+  }
+
+  const payload = ticket.getPayload();
+
+  if (!payload?.email || !payload.email_verified) {
+    throw new HttpError(401, 'Google account email must be verified.');
+  }
+
+  let user = await findUserByEmail(payload.email);
+
+  if (user && !user.emailVerifiedAt) {
+    user = await markUserEmailVerified(user.id);
+  }
+
+  if (user && ['suspended', 'banned'].includes(user.status)) {
+    throw new HttpError(403, 'This account is not allowed to access HanapGawa.');
+  }
+
+  if (!user) {
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    user = await createUser({
+      email: payload.email,
+      passwordHash,
+      role: 'user',
+      fullName: payload.name || payload.email.split('@')[0],
+      emailVerifiedAt: new Date(),
+    });
+  }
+
+  return {
+    user: buildPublicUser(user),
+    token: signAccessToken(user),
+  };
+}
+
 function verifyExternalToken(token) {
   return jwt.verify(token, env.jwtSecret);
 }
@@ -172,6 +228,7 @@ module.exports = {
   loginUser,
   registerUser,
   resendVerificationCode,
+  signInWithGoogle,
   verifyEmail,
   verifyExternalToken,
 };

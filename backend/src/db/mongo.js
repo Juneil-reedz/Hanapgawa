@@ -11,7 +11,9 @@ async function getMongoDb() {
   }
 
   if (!client) {
-    client = new MongoClient(env.mongodbUrl);
+    client = new MongoClient(env.mongodbUrl, {
+      readPreference: 'secondaryPreferred',
+    });
     await client.connect();
     db = client.db(env.mongodbDbName);
   }
@@ -52,8 +54,19 @@ async function checkMongoHealth() {
   return { configured: true, healthy: true };
 }
 
+async function closeMongoClient() {
+  if (!client) {
+    return;
+  }
+
+  await client.close();
+  client = null;
+  db = null;
+}
+
 module.exports = {
   ensureMongoCollections,
   checkMongoHealth,
   getMongoDb,
+  closeMongoClient,
 };

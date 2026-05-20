@@ -11,6 +11,8 @@ const router = express.Router();
 const reportSchema = z.object({
   providerUserId: z.uuid().optional(),
   bookingId: z.uuid().optional(),
+  contentType: z.enum(['social_post']).optional(),
+  contentId: z.uuid().optional(),
   reason: z.string().min(3).max(160),
   details: z.string().max(1500).optional().default(''),
 });

@@ -1,7 +1,7 @@
 const { createReport, listReports, updateReportStatus } = require('../repositories/report-repository');
 
-async function submitReport({ reporterUserId, providerUserId, bookingId, reason, details }) {
-  return createReport({ reporterUserId, providerUserId, bookingId, reason, details });
+async function submitReport({ reporterUserId, providerUserId, bookingId, contentType, contentId, reason, details }) {
+  return createReport({ reporterUserId, providerUserId, bookingId, contentType, contentId, reason, details });
 }
 
 async function getReports(status) {

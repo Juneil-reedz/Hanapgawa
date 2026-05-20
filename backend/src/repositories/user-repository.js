@@ -1,13 +1,15 @@
-const { getPostgresPool } = require('../db/postgres');
+const { getPostgresPool, getPostgresReadPool } = require('../db/postgres');
 const { HttpError } = require('../lib/http-error');
 
 function requirePostgres() {
   const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
+  return pool;
+}
 
-  if (!pool) {
-    throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
-  }
-
+function requirePostgresRead() {
+  const pool = getPostgresReadPool();
+  if (!pool) throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
   return pool;
 }
 
@@ -33,24 +35,40 @@ async function ensureAuthSchema(pool) {
   authSchemaReady = true;
 }
 
-async function createUser({ email, passwordHash, role, fullName }) {
+async function createUser({ email, passwordHash, role, fullName, emailVerifiedAt = null }) {
   const pool = requirePostgres();
   await ensureAuthSchema(pool);
   const result = await pool.query(
     `
-      INSERT INTO users (email, password_hash, role, full_name)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO users (email, password_hash, role, full_name, email_verified_at)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING id, email, role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status, created_at AS "createdAt"
     `,
-    [email, passwordHash, role, fullName],
+    [email, passwordHash, role, fullName, emailVerifiedAt],
   );
 
   return result.rows[0];
 }
 
-async function findUserByEmail(email) {
+async function markUserEmailVerified(userId) {
   const pool = requirePostgres();
   await ensureAuthSchema(pool);
+  const result = await pool.query(
+    `
+      UPDATE users
+      SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, email, role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status
+    `,
+    [userId],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function findUserByEmail(email) {
+  const pool = requirePostgresRead();
+  await ensureAuthSchema(requirePostgres());
   const result = await pool.query(
     `
       SELECT id, email, password_hash AS "passwordHash", role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status
@@ -64,8 +82,7 @@ async function findUserByEmail(email) {
 }
 
 async function findUserById(id) {
-  const pool = requirePostgres();
-  await ensureAuthSchema(pool);
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT id, email, role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status
@@ -79,8 +96,7 @@ async function findUserById(id) {
 }
 
 async function listUsersByRoles(roles, status) {
-  const pool = requirePostgres();
-  await ensureAuthSchema(pool);
+  const pool = requirePostgresRead();
   const values = [roles];
   let query = `
     SELECT id, email, role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status, created_at AS "createdAt"
@@ -96,6 +112,44 @@ async function listUsersByRoles(roles, status) {
   query += ' ORDER BY created_at DESC';
 
   const result = await pool.query(query, values);
+  return result.rows;
+}
+
+async function listAllUsersForAdmin(search) {
+  const pool = requirePostgresRead();
+  const values = [];
+  let where = '';
+
+  if (search) {
+    values.push(`%${search.toLowerCase()}%`);
+    where = `WHERE LOWER(u.full_name) LIKE $1 OR LOWER(u.email) LIKE $1`;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        u.id,
+        u.email,
+        u.role,
+        u.full_name AS "fullName",
+        u.email_verified_at AS "emailVerifiedAt",
+        u.status,
+        u.created_at AS "createdAt",
+        COUNT(DISTINCT jp.id)::INT AS "postCount",
+        COUNT(DISTINCT sp.id)::INT AS "socialPostCount",
+        COUNT(DISTINCT rr.id)::INT AS "reportCount"
+      FROM users u
+      LEFT JOIN job_posts jp ON jp.client_user_id = u.id
+      LEFT JOIN social_posts sp ON sp.user_id = u.id
+      LEFT JOIN reports rr ON rr.reporter_user_id = u.id OR rr.provider_user_id = u.id
+      ${where}
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+      LIMIT 100
+    `,
+    values,
+  );
+
   return result.rows;
 }
 
@@ -120,8 +174,7 @@ async function listUsersByIds(ids) {
     return [];
   }
 
-  const pool = requirePostgres();
-  await ensureAuthSchema(pool);
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT id, email, role, full_name AS "fullName", email_verified_at AS "emailVerifiedAt", status
@@ -151,8 +204,7 @@ async function createEmailVerificationCode({ userId, codeHash, expiresAt }) {
 }
 
 async function findActiveEmailVerificationCode(userId) {
-  const pool = requirePostgres();
-  await ensureAuthSchema(pool);
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT id, user_id AS "userId", code_hash AS "codeHash", expires_at AS "expiresAt"
@@ -201,7 +253,9 @@ module.exports = {
   findUserById,
   findActiveEmailVerificationCode,
   listUsersByIds,
+  listAllUsersForAdmin,
   listUsersByRoles,
   markEmailVerified,
+  markUserEmailVerified,
   updateUserStatus,
 };

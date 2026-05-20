@@ -20,6 +20,7 @@ const serviceListingSchema = z.object({
   requirements: z.array(z.string().min(1).max(160)).max(12).default([]),
   availability: z.array(z.string().min(1).max(120)).max(12).default([]),
   media: z.array(z.object({ imageUrl: z.string().max(500), caption: z.string().max(160).optional().default('') })).max(12).default([]),
+  allowDirectBooking: z.boolean().default(false),
 });
 
 router.get(
@@ -46,8 +47,10 @@ router.get(
 router.post(
   '/',
   authenticate,
-  authorizeRoles('worker', 'agency', 'admin'),
   asyncHandler(async (req, res) => {
+    if (req.auth.role === 'admin') {
+      throw new HttpError(403, 'Admins cannot create service listings.');
+    }
     const payload = serviceListingSchema.safeParse(req.body);
 
     if (!payload.success) {

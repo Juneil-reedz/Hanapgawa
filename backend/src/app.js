@@ -9,10 +9,28 @@ const { apiRoutes } = require('./routes');
 
 const app = express();
 
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  if (origin === env.clientOrigin) {
+    return true;
+  }
+
+  if (env.nodeEnv !== 'production') {
+    return /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+):8100$/.test(origin);
+  }
+
+  return false;
+}
+
 app.use(helmet());
 app.use(
   cors({
-    origin: env.clientOrigin,
+    origin(origin, callback) {
+      callback(null, isAllowedOrigin(origin));
+    },
     credentials: true,
   }),
 );

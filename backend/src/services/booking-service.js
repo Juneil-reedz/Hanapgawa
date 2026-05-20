@@ -1,20 +1,17 @@
 const { HttpError } = require('../lib/http-error');
-const { assertApprovedProvider } = require('../lib/provider-approval');
-const { createBooking, findBookingById, listAllBookings, listBookingsForUser, updateBookingStatus } = require('../repositories/booking-repository');
+const { createBooking, findBookingById, listAllBookings, listBookingsForUser, removeBooking, rescheduleBooking, updateBookingStatus } = require('../repositories/booking-repository');
 const { findUserById } = require('../repositories/user-repository');
 
-async function requestBooking({ clientUserId, providerUserId, serviceListingId, serviceCategory, municipality, locationDetails, notes, scheduledAt, isAdmin }) {
-  if (!isAdmin) {
-    const provider = await findUserById(providerUserId);
-
-    if (!provider) {
-      throw new HttpError(404, 'Provider account not found.');
-    }
-
-    assertApprovedProvider(provider, 'Bookings can only be created for approved providers.');
+async function requestBooking({ clientUserId, workerUserId, serviceListingId, serviceCategory, municipality, locationDetails, notes, scheduledAt }) {
+  const worker = await findUserById(workerUserId);
+  if (!worker) {
+    throw new HttpError(404, 'Worker account not found.');
+  }
+  if (worker.role === 'admin') {
+    throw new HttpError(403, 'Cannot book an admin account.');
   }
 
-  return createBooking({ clientUserId, providerUserId, serviceListingId, serviceCategory, municipality, locationDetails, notes, scheduledAt });
+  return createBooking({ clientUserId, workerUserId, serviceListingId, serviceCategory, municipality, locationDetails, notes, scheduledAt, status: 'pending', source: 'direct_booking' });
 }
 
 async function getBookingsForUser(userId, status) {
@@ -29,7 +26,7 @@ async function getBookingForUser({ bookingId, auth }) {
     throw new HttpError(404, 'Booking not found.');
   }
 
-  const isParticipant = booking.clientUserId === auth.sub || booking.providerUserId === auth.sub;
+  const isParticipant = booking.clientUserId === auth.sub || booking.workerUserId === auth.sub;
   if (!isParticipant && auth.role !== 'admin') {
     throw new HttpError(403, 'You can only view bookings you are part of.');
   }
@@ -37,7 +34,7 @@ async function getBookingForUser({ bookingId, auth }) {
   return booking;
 }
 
-async function changeBookingStatus({ bookingId, status, auth }) {
+async function changeBookingStatus({ bookingId, status, cancellationReason, auth }) {
   const booking = await findBookingById(bookingId);
 
   if (!booking) {
@@ -45,27 +42,38 @@ async function changeBookingStatus({ bookingId, status, auth }) {
   }
 
   const isAdmin = auth.role === 'admin';
-  const isProviderOwner = booking.providerUserId === auth.sub;
+  const isWorkerOwner = booking.workerUserId === auth.sub;
   const isClientOwner = booking.clientUserId === auth.sub;
+  const approverUserId = booking.source === 'job_application' ? booking.clientUserId : booking.workerUserId;
 
-  const providerStatuses = ['accepted', 'rejected', 'in_progress', 'completion_requested'];
-  const clientStatuses = ['completed', 'cancellation_requested'];
-
-  if (!isAdmin && providerStatuses.includes(status)) {
-    const provider = await findUserById(booking.providerUserId);
-    assertApprovedProvider(provider, 'Only approved providers can manage booking status.');
+  if (isAdmin) {
+    if (status !== 'cancelled' || booking.status !== 'cancellation_requested') {
+      throw new HttpError(403, 'Admins can monitor bookings but cannot participate in booking workflow actions.');
+    }
   }
 
-  if (providerStatuses.includes(status) && !isAdmin && !isProviderOwner) {
-    throw new HttpError(403, 'Only the assigned provider or admin can update this booking stage.');
+  const workerStatuses = ['in_progress', 'completion_requested'];
+  const clientStatuses = ['completed'];
+
+  if (['accepted', 'rejected'].includes(status) && !isAdmin && auth.sub !== approverUserId) {
+    throw new HttpError(403, 'Only the booking approver can accept or decline this booking.');
+  }
+
+  if (workerStatuses.includes(status) && !isAdmin && !isWorkerOwner) {
+    throw new HttpError(403, 'Only the assigned worker or admin can update this booking stage.');
   }
 
   if (clientStatuses.includes(status) && !isAdmin && !isClientOwner) {
     throw new HttpError(403, 'Only the client or admin can confirm this booking stage.');
   }
 
+  // Both client and worker can request cancellation
+  if (status === 'cancellation_requested' && !isAdmin && !isClientOwner && !isWorkerOwner) {
+    throw new HttpError(403, 'Only booking participants or admin can request cancellation.');
+  }
+
   if (status === 'cancelled') {
-    if (!isAdmin && !(isClientOwner || isProviderOwner)) {
+    if (!isAdmin && !(isClientOwner || isWorkerOwner)) {
       throw new HttpError(403, 'Only booking participants or admin can finalize cancellation.');
     }
 
@@ -78,11 +86,46 @@ async function changeBookingStatus({ bookingId, status, auth }) {
     throw new HttpError(409, 'Provider must request completion before client confirmation.');
   }
 
-  return updateBookingStatus({ bookingId: booking.id, status, actorUserId: auth.sub });
+  return updateBookingStatus({ bookingId: booking.id, status, actorUserId: auth.sub, cancellationReason });
+}
+
+async function moveBookingDate({ bookingId, scheduledAt, rescheduleNote, auth }) {
+  const booking = await findBookingById(bookingId);
+  if (!booking) throw new HttpError(404, 'Booking not found.');
+
+  const isWorker = booking.workerUserId === auth.sub;
+  const isClient = booking.clientUserId === auth.sub;
+
+  if (!isWorker && !isClient) {
+    throw new HttpError(403, 'You are not a participant of this booking.');
+  }
+
+  // Worker can reschedule accepted bookings; client can reschedule pending bookings
+  if (isWorker && booking.status !== 'accepted') {
+    throw new HttpError(409, 'Workers can only move the date of accepted bookings.');
+  }
+  if (isClient && booking.status !== 'pending') {
+    throw new HttpError(409, 'Clients can only move the date before the provider accepts.');
+  }
+
+  const updated = await rescheduleBooking({ bookingId, scheduledAt, rescheduleNote });
+  if (!updated) throw new HttpError(500, 'Reschedule failed.');
+  return updated;
 }
 
 async function getAllBookings(status) {
   return listAllBookings(status);
 }
 
-module.exports = { requestBooking, getBookingsForUser, getBookingForUser, changeBookingStatus, getAllBookings };
+async function deleteBookingRecord({ bookingId, auth }) {
+  const booking = await findBookingById(bookingId);
+  if (!booking) throw new HttpError(404, 'Booking not found.');
+  const isParticipant = booking.clientUserId === auth.sub || booking.workerUserId === auth.sub;
+  if (!isParticipant && auth.role !== 'admin') throw new HttpError(403, 'You are not a participant of this booking.');
+  if (!['completed', 'cancelled', 'rejected'].includes(booking.status)) {
+    throw new HttpError(409, 'You can only remove completed or cancelled bookings.');
+  }
+  await removeBooking(bookingId);
+}
+
+module.exports = { requestBooking, getBookingsForUser, getBookingForUser, changeBookingStatus, moveBookingDate, getAllBookings, deleteBookingRecord };

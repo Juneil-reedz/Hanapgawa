@@ -3,6 +3,13 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const { app } = require('../src/app');
+const { closeMongoClient } = require('../src/db/mongo');
+const { closePostgresPool } = require('../src/db/postgres');
+const { closeRedisClient } = require('../src/db/redis');
+
+test.after(async () => {
+  await Promise.all([closePostgresPool(), closeMongoClient(), closeRedisClient()]);
+});
 
 test('GET / returns API metadata', async () => {
   const response = await request(app).get('/');

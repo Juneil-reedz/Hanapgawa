@@ -29,6 +29,7 @@ async function createServiceListing({
   requirements,
   availability,
   media,
+  allowDirectBooking = false,
 }) {
   const provider = await findUserById(providerUserId);
   assertApprovedProvider(provider, 'Only approved workers and agencies can publish service listings.');
@@ -47,6 +48,7 @@ async function createServiceListing({
     requirements,
     availability,
     media,
+    allowDirectBooking: Boolean(allowDirectBooking),
     status: 'active',
     createdAt: new Date(),
     updatedAt: new Date(),

@@ -29,7 +29,6 @@ const providerProfileSchema = z.object({
 router.post(
   '/',
   authenticate,
-  authorizeRoles('worker', 'agency', 'admin'),
   asyncHandler(async (req, res) => {
     const payload = providerProfileSchema.safeParse(req.body);
 
@@ -37,10 +36,14 @@ router.post(
       throw new HttpError(400, 'Invalid provider profile payload.', payload.error.flatten());
     }
 
+    if (req.auth.role === 'admin') {
+      throw new HttpError(403, 'Admins cannot create provider profiles.');
+    }
+
     const profile = await upsertProviderProfile({
       userId: req.auth.sub,
       role: req.auth.role,
-      isAdmin: req.auth.role === 'admin',
+      isAdmin: false,
       ...payload.data,
     });
 

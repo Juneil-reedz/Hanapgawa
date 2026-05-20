@@ -1,13 +1,15 @@
-const { getPostgresPool } = require('../db/postgres');
+const { getPostgresPool, getPostgresReadPool } = require('../db/postgres');
 const { HttpError } = require('../lib/http-error');
 
 function requirePostgres() {
   const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
+  return pool;
+}
 
-  if (!pool) {
-    throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
-  }
-
+function requirePostgresRead() {
+  const pool = getPostgresReadPool();
+  if (!pool) throw new HttpError(503, 'PostgreSQL is not configured. Set POSTGRES_URL first.');
   return pool;
 }
 
@@ -23,8 +25,10 @@ const jobSelect = `
   jp.description,
   jp.budget_min AS "budgetMin",
   jp.budget_max AS "budgetMax",
+  jp.allow_direct_booking AS "allowDirectBooking",
   jp.status,
   (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id) AS "offerCount",
+  (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id AND offers.status = 'pending') AS "pendingOfferCount",
   jp.assigned_provider_user_id AS "assignedProviderUserId",
   provider.full_name AS "assignedProviderFullName",
   jp.scheduled_at AS "scheduledAt",
@@ -36,7 +40,7 @@ const offerSelect = `
   jo.id,
   jo.job_post_id AS "jobPostId",
   jo.provider_user_id AS "providerUserId",
-  provider.full_name AS "providerFullName",
+  provider.full_name AS "providerName",
   jo.message,
   jo.proposed_price AS "proposedPrice",
   jo.media,
@@ -45,7 +49,7 @@ const offerSelect = `
   jo.updated_at AS "updatedAt"
 `;
 
-async function createJobPost({ clientUserId, postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, scheduledAt }) {
+async function createJobPost({ clientUserId, postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, scheduledAt, allowDirectBooking }) {
   const pool = requirePostgres();
   const result = await pool.query(
     `
@@ -59,9 +63,10 @@ async function createJobPost({ clientUserId, postType, title, category, municipa
         description,
         budget_min,
         budget_max,
-        scheduled_at
+        scheduled_at,
+        allow_direct_booking
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING
         id,
         client_user_id AS "clientUserId",
@@ -73,6 +78,7 @@ async function createJobPost({ clientUserId, postType, title, category, municipa
         description,
         budget_min AS "budgetMin",
         budget_max AS "budgetMax",
+        allow_direct_booking AS "allowDirectBooking",
         status,
         0 AS "offerCount",
         assigned_provider_user_id AS "assignedProviderUserId",
@@ -80,14 +86,63 @@ async function createJobPost({ clientUserId, postType, title, category, municipa
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `,
-    [clientUserId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, scheduledAt || null],
+    [clientUserId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, scheduledAt || null, allowDirectBooking ?? false],
   );
 
   return result.rows[0];
 }
 
-async function listJobPosts({ userId, role, status }) {
+async function updateJobPost(jobPostId, { postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, scheduledAt, allowDirectBooking }) {
   const pool = requirePostgres();
+  const result = await pool.query(
+    `
+      UPDATE job_posts
+      SET
+        post_type = $2,
+        title = $3,
+        category = $4,
+        municipality = $5,
+        location_details = $6,
+        description = $7,
+        budget_min = $8,
+        budget_max = $9,
+        scheduled_at = $10,
+        allow_direct_booking = $11,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        client_user_id AS "clientUserId",
+        post_type AS "postType",
+        title,
+        category,
+        municipality,
+        location_details AS "locationDetails",
+        description,
+        budget_min AS "budgetMin",
+        budget_max AS "budgetMax",
+        allow_direct_booking AS "allowDirectBooking",
+        status,
+        (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id) AS "offerCount",
+        assigned_provider_user_id AS "assignedProviderUserId",
+        scheduled_at AS "scheduledAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+    `,
+    [jobPostId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, scheduledAt || null, allowDirectBooking ?? false],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function deleteJobPost(jobPostId) {
+  const pool = requirePostgres();
+  const result = await pool.query('DELETE FROM job_posts WHERE id = $1 RETURNING id', [jobPostId]);
+  return result.rowCount > 0;
+}
+
+async function listJobPosts({ userId, role, status }) {
+  const pool = requirePostgresRead();
   const values = [];
   const conditions = [];
 
@@ -114,7 +169,7 @@ async function listJobPosts({ userId, role, status }) {
 }
 
 async function findJobPostById(jobPostId) {
-  const pool = requirePostgres();
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT ${jobSelect}
@@ -155,7 +210,7 @@ async function createJobOffer({ jobPostId, providerUserId, message, proposedPric
 }
 
 async function listOffersForJob(jobPostId) {
-  const pool = requirePostgres();
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT ${offerSelect}
@@ -171,7 +226,7 @@ async function listOffersForJob(jobPostId) {
 }
 
 async function listOffersForProvider(providerUserId) {
-  const pool = requirePostgres();
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT
@@ -192,7 +247,7 @@ async function listOffersForProvider(providerUserId) {
 }
 
 async function findJobOfferById(offerId) {
-  const pool = requirePostgres();
+  const pool = requirePostgresRead();
   const result = await pool.query(
     `
       SELECT ${offerSelect}
@@ -289,13 +344,28 @@ async function acceptJobOffer({ jobPostId, offerId }) {
   }
 }
 
+async function declineJobOffer({ jobPostId, offerId }) {
+  const pool = requirePostgres();
+  const result = await pool.query(
+    `UPDATE job_offers SET status = 'declined', updated_at = NOW()
+     WHERE id = $1 AND job_post_id = $2 AND status = 'pending'
+     RETURNING id, job_post_id AS "jobPostId", provider_user_id AS "providerUserId",
+               status, created_at AS "createdAt"`,
+    [offerId, jobPostId],
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   acceptJobOffer,
   createJobOffer,
   createJobPost,
+  declineJobOffer,
+  deleteJobPost,
   findJobOfferById,
   findJobPostById,
   listJobPosts,
   listOffersForJob,
   listOffersForProvider,
+  updateJobPost,
 };

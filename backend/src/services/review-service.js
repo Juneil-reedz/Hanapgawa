@@ -1,40 +1,56 @@
 const { HttpError } = require('../lib/http-error');
 const { findBookingById } = require('../repositories/booking-repository');
-const { createReview, listReviewsForProvider } = require('../repositories/review-repository');
+const { createReview, listReviewsForUser } = require('../repositories/review-repository');
 const { findUserById } = require('../repositories/user-repository');
 
-async function submitReview({ bookingId, reviewerUserId, rating, comment, isAdmin }) {
+async function submitReview({ bookingId, reviewerUserId, rating, comment }) {
   const booking = await findBookingById(bookingId);
 
   if (!booking) {
     throw new HttpError(404, 'Booking not found.');
   }
 
-  if (!isAdmin && booking.clientUserId !== reviewerUserId) {
-    throw new HttpError(403, 'You can only review your own bookings.');
+  const isClient = booking.clientUserId === reviewerUserId;
+  const isWorker = booking.workerUserId === reviewerUserId;
+
+  if (!isClient && !isWorker) {
+    throw new HttpError(403, 'You must be a participant in this booking to leave a review.');
   }
 
   if (booking.status !== 'completed') {
     throw new HttpError(409, 'Only completed bookings can be reviewed.');
   }
 
-  const provider = await findUserById(booking.providerUserId);
+  // The reviewed person is the other party in the booking
+  const reviewedUserId = isClient ? booking.workerUserId : booking.clientUserId;
+  const [reviewer, reviewedUser] = await Promise.all([
+    findUserById(reviewerUserId),
+    findUserById(reviewedUserId),
+  ]);
 
-  if (!provider || !['worker', 'agency'].includes(provider.role)) {
-    throw new HttpError(409, 'The booking provider is not reviewable.');
+  if (reviewer?.role === 'admin') {
+    throw new HttpError(403, 'Admins cannot leave marketplace reviews.');
+  }
+
+  if (reviewedUser?.role === 'admin') {
+    throw new HttpError(403, 'Admin accounts cannot receive marketplace reviews.');
   }
 
   return createReview({
     bookingId: booking.id,
     reviewerUserId,
-    providerUserId: booking.providerUserId,
+    reviewedUserId,
     rating,
     comment,
   });
 }
 
 async function getProviderReviews(providerUserId) {
-  return listReviewsForProvider(providerUserId);
+  return listReviewsForUser(providerUserId);
 }
 
-module.exports = { submitReview, getProviderReviews };
+async function getReviewsForUser(userId) {
+  return listReviewsForUser(userId);
+}
+
+module.exports = { submitReview, getProviderReviews, getReviewsForUser };

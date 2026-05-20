@@ -5,7 +5,11 @@ const { ensurePostgresSchema } = require('./db/postgres');
 
 async function bootstrap() {
   try {
-    await ensurePostgresSchema();
+    try {
+      await ensurePostgresSchema();
+    } catch (error) {
+      console.warn('PostgreSQL schema migration failed (server will still start):', error.message);
+    }
 
     try {
       await ensureMongoCollections();

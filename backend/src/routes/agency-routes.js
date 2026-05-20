@@ -21,7 +21,7 @@ const updateApplicationSchema = z.object({
 router.post(
   '/applications',
   authenticate,
-  authorizeRoles('agency', 'admin'),
+  authorizeRoles('agency'),
   asyncHandler(async (req, res) => {
     const payload = createApplicationSchema.safeParse(req.body);
 
@@ -42,7 +42,7 @@ router.post(
 router.get(
   '/applications/mine',
   authenticate,
-  authorizeRoles('agency', 'worker', 'admin'),
+  authorizeRoles('agency', 'worker'),
   asyncHandler(async (req, res) => {
     const applications = await listMyApplications({
       role: req.auth.role,
@@ -57,7 +57,7 @@ router.get(
 router.patch(
   '/applications/:applicationId',
   authenticate,
-  authorizeRoles('worker', 'admin'),
+  authorizeRoles('worker'),
   asyncHandler(async (req, res) => {
     const applicationId = z.uuid().safeParse(req.params.applicationId);
 
