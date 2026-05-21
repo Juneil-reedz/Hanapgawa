@@ -11,11 +11,14 @@ router.get('/', asyncHandler(async (req, res) => {
   const pool = getPostgresPool();
   if (!pool) return res.json({ stories: [] });
   const result = await pool.query(
-    `SELECT id, user_id AS "userId", full_name AS "fullName", profile_pic AS "profilePic",
-            body, image, video, metadata, privacy, expires_at AS "expiresAt", created_at AS "createdAt"
-     FROM stories
-     WHERE expires_at > NOW() AND privacy = 'Public'
-     ORDER BY created_at DESC
+    `SELECT s.id, s.user_id AS "userId", s.full_name AS "fullName",
+            COALESCE(up.profile_pic, s.profile_pic) AS "profilePic",
+            s.body, s.image, s.video, s.metadata, s.privacy,
+            s.expires_at AS "expiresAt", s.created_at AS "createdAt"
+     FROM stories s
+     LEFT JOIN user_profiles up ON up.user_id = s.user_id
+     WHERE s.expires_at > NOW() AND s.privacy = 'Public'
+     ORDER BY s.created_at DESC
      LIMIT 50`,
   );
   res.json({ stories: result.rows });

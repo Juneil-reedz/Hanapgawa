@@ -39,6 +39,7 @@ async function uploadToCloudinary(file, resourceType) {
   return json.secure_url;
 }
 
+// Used in INSERT...RETURNING (no JOIN alias needed)
 const SELECT_COLS = `
   id, user_id AS "userId", full_name AS "fullName",
   profile_pic AS "profilePic", body, image, video, metadata, privacy,
@@ -49,6 +50,19 @@ const SELECT_COLS = `
   created_at AS "createdAt"
 `;
 
+// Used in SELECT queries — JOINs current profile pic so old posts show updated avatars
+const SELECT_JOINED = `
+  sp.id, sp.user_id AS "userId", sp.full_name AS "fullName",
+  COALESCE(up.profile_pic, sp.profile_pic) AS "profilePic",
+  sp.body, sp.image, sp.video, sp.metadata, sp.privacy,
+  sp.scheduled_at AS "scheduledAt",
+  sp.shared_from_type AS "sharedFromType",
+  sp.shared_from_id AS "sharedFromId",
+  sp.shared_snapshot AS "sharedSnapshot",
+  sp.created_at AS "createdAt"
+`;
+const FROM_JOINED = `FROM social_posts sp LEFT JOIN user_profiles up ON up.user_id = sp.user_id`;
+
 // GET /posts
 router.get(
   '/',
@@ -58,10 +72,9 @@ router.get(
     if (!pool) return res.json({ posts: [] });
 
     const result = await pool.query(
-      `SELECT ${SELECT_COLS}
-       FROM social_posts
-       WHERE privacy = 'Public' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-       ORDER BY created_at DESC LIMIT $1`,
+      `SELECT ${SELECT_JOINED} ${FROM_JOINED}
+       WHERE sp.privacy = 'Public' AND (sp.scheduled_at IS NULL OR sp.scheduled_at <= NOW())
+       ORDER BY sp.created_at DESC LIMIT $1`,
       [limit],
     );
     res.json({ posts: result.rows });
@@ -78,7 +91,7 @@ router.get(
     if (!pool) return res.json({ posts: [] });
 
     const result = await pool.query(
-      `SELECT ${SELECT_COLS} FROM social_posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      `SELECT ${SELECT_JOINED} ${FROM_JOINED} WHERE sp.user_id = $1 ORDER BY sp.created_at DESC LIMIT $2`,
       [req.auth.sub, limit],
     );
     const items = result.rows.map((post) => ({
