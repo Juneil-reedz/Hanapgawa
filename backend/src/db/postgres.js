@@ -156,15 +156,6 @@ async function ensurePostgresSchema() {
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_confirmed_at TIMESTAMPTZ`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancellation_requested_by UUID REFERENCES users(id) ON DELETE SET NULL`);
-  await client.query(`
-    DO $$ BEGIN
-      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'job_posts') THEN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'bookings' AND column_name = 'reposted_job_id') THEN
-          ALTER TABLE bookings ADD COLUMN reposted_job_id UUID REFERENCES job_posts(id) ON DELETE SET NULL;
-        END IF;
-      END IF;
-    END $$
-  `);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reschedule_note TEXT`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancellation_reason TEXT`);
@@ -355,6 +346,7 @@ async function ensurePostgresSchema() {
   `);
 
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS job_post_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
+  await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reposted_job_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
 
   await client.query(`ALTER TABLE reports ADD COLUMN IF NOT EXISTS content_type TEXT`);
   await client.query(`ALTER TABLE reports ADD COLUMN IF NOT EXISTS content_id TEXT`);
