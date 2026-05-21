@@ -46,9 +46,9 @@ class _FeedCardState extends State<FeedCard> {
     super.initState();
     _liked = widget.item.isLiked;
     _likeCount = widget.item.likeCount;
-    LocalDb.instance
-        .isFavorite(widget.item.id, widget.item.type)
-        .then((v) { if (mounted) setState(() => _isSaved = v); });
+    LocalDb.instance.isFavorite(widget.item.id, widget.item.type).then((v) {
+      if (mounted) setState(() => _isSaved = v);
+    });
   }
 
   Future<void> _toggleSave() async {
@@ -56,7 +56,8 @@ class _FeedCardState extends State<FeedCard> {
     if (_isSaved) {
       await LocalDb.instance.removeFavorite(widget.item.id, widget.item.type);
       if (mounted) setState(() => _isSaved = false);
-      messenger.showSnackBar(const SnackBar(content: Text('Removed from saved.')));
+      messenger
+          .showSnackBar(const SnackBar(content: Text('Removed from saved.')));
     } else {
       final item = widget.item;
       final data = <String, dynamic>{
@@ -117,9 +118,12 @@ class _FeedCardState extends State<FeedCard> {
         });
       } else {
         // Revert optimistic update on non-network errors
-        if (mounted) setState(() { _liked = prevLiked; _likeCount = prevCount; });
-        messenger.showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        if (mounted)
+          setState(() {
+            _liked = prevLiked;
+            _likeCount = prevCount;
+          });
+        messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -181,8 +185,7 @@ class _FeedCardState extends State<FeedCard> {
   }
 
   bool get _canAdminManageSocialPost =>
-      widget.item.socialPost != null &&
-      widget.api.storedUser?.role == 'admin';
+      widget.item.socialPost != null && widget.api.storedUser?.role == 'admin';
 
   bool get _isAdminViewer => widget.api.storedUser?.role == 'admin';
 
@@ -209,8 +212,8 @@ class _FeedCardState extends State<FeedCard> {
     try {
       await widget.api.updateAdminUserStatus(userId, 'suspended');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User suspended.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('User suspended.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -289,7 +292,8 @@ class _FeedCardState extends State<FeedCard> {
                     } catch (e) {
                       if (!ctx.mounted) return;
                       if (SyncService.isNetworkError(e)) {
-                        await LocalDb.instance.queueAction('update_social_post', {
+                        await LocalDb.instance
+                            .queueAction('update_social_post', {
                           'postId': post.id,
                           'body': body,
                           'privacy': privacy,
@@ -305,8 +309,8 @@ class _FeedCardState extends State<FeedCard> {
                           backgroundColor: Colors.orange,
                         ));
                       } else {
-                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                            content: Text(friendlyError(e))));
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text(friendlyError(e))));
                       }
                     }
                   },
@@ -481,8 +485,8 @@ class _FeedCardState extends State<FeedCard> {
                         fontWeight: FontWeight.w700, color: Colors.red)),
                 subtitle: const Text('Help us keep the community safe',
                     style: TextStyle(fontSize: 12)),
-                trailing:
-                    const Icon(Icons.chevron_right, color: Colors.red, size: 20),
+                trailing: const Icon(Icons.chevron_right,
+                    color: Colors.red, size: 20),
                 onTap: () {
                   Navigator.pop(ctx);
                   showReportSheet(context,
@@ -605,7 +609,8 @@ class _FeedCardState extends State<FeedCard> {
         }
         return;
       }
-      await LocalDb.instance.queueAction('delete_social_post', {'postId': post.id});
+      await LocalDb.instance
+          .queueAction('delete_social_post', {'postId': post.id});
       if (mounted) {
         setState(() => _deleting = false);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -630,7 +635,8 @@ class _FeedCardState extends State<FeedCard> {
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('delete_social_post', {'postId': post.id});
+        await LocalDb.instance
+            .queueAction('delete_social_post', {'postId': post.id});
         if (!mounted) return;
         setState(() => _deleting = false);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -874,8 +880,9 @@ class _FeedCardState extends State<FeedCard> {
     final badge = job.postType == 'offering_service'
         ? 'Looking For Client'
         : 'Looking For Worker';
-    final badgeColor =
-        job.postType == 'offering_service' ? const Color(0xFF1E88E5) : appPrimary;
+    final badgeColor = job.postType == 'offering_service'
+        ? const Color(0xFF1E88E5)
+        : appPrimary;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         Expanded(
@@ -1035,16 +1042,7 @@ class _FeedCardState extends State<FeedCard> {
               child: Container(
                 color: Colors.white,
                 child: post.profilePic != null
-                    ? Image.memory(
-                        base64Decode(post.profilePic!),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Center(
-                            child: Text(initials,
-                                style: const TextStyle(
-                                    color: appPrimary,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 15))),
-                      )
+                    ? _buildProfilePic(post.profilePic!, initials)
                     : Center(
                         child: Text(initials,
                             style: const TextStyle(
@@ -1219,31 +1217,38 @@ class _FeedCardState extends State<FeedCard> {
               ),
             ),
           ],
-          if (post.image != null) ...[
+          // Multiple media items (new posts)
+          if (post.metadata['mediaItems'] is List &&
+              (post.metadata['mediaItems'] as List).isNotEmpty) ...[
             const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 320),
-                child: post.image!.startsWith('http')
-                    ? Image.network(
-                        post.image!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      )
-                    : Image.memory(
-                        base64Decode(post.image!),
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      ),
+            _PostMediaGrid(
+                items: List<Map<String, dynamic>>.from(
+                    post.metadata['mediaItems'] as List)),
+          ] else ...[
+            // Legacy single image / video
+            if (post.image != null) ...[
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: post.image!.startsWith('http')
+                      ? Image.network(post.image!,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                      : Image.memory(base64Decode(post.image!),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          errorBuilder: (_, __, ___) =>
+                              const SizedBox.shrink()),
+                ),
               ),
-            ),
-          ],
-          if (post.video != null) ...[
-            const SizedBox(height: 10),
-            _InlineVideoPlayer(base64Video: post.video!),
+            ],
+            if (post.video != null) ...[
+              const SizedBox(height: 10),
+              _InlineVideoPlayer(base64Video: post.video!),
+            ],
           ],
           if (post.sharedSnapshot != null) ...[
             const SizedBox(height: 10),
@@ -1313,8 +1318,7 @@ class PostMetadata extends StatelessWidget {
         ),
       if (metadata['location'] != null)
         (icon: Icons.place_outlined, label: '${metadata['location']}'),
-      if (metadata['gif'] != null)
-        (icon: Icons.gif_box_outlined, label: 'GIF'),
+      if (metadata['gif'] != null) (icon: Icons.gif_box_outlined, label: 'GIF'),
       if (metadata['music'] != null)
         (icon: Icons.music_note_outlined, label: '${metadata['music']}'),
     ];
@@ -1894,6 +1898,145 @@ class _ActionBtn extends StatelessWidget {
       );
 }
 
+// ─── Multi-media grid (feed display) ──────────────────────────────────────────
+
+class _PostMediaGrid extends StatelessWidget {
+  const _PostMediaGrid({required this.items});
+  final List<Map<String, dynamic>> items;
+
+  Widget _cell(Map<String, dynamic> item) {
+    final type = item['type']?.toString() ?? 'image';
+    final url = item['url']?.toString() ?? '';
+    if (type == 'video') {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: _InlineVideoPlayer(base64Video: url),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: url.startsWith('http')
+          ? Image.network(url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  const ColoredBox(color: Colors.black12))
+          : Image.memory(base64Decode(url),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  const ColoredBox(color: Colors.black12)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = items.length;
+    if (count == 1) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 320),
+        child: _cell(items[0]),
+      );
+    }
+    if (count == 2) {
+      return SizedBox(
+        height: 200,
+        child: Row(children: [
+          Expanded(child: _cell(items[0])),
+          const SizedBox(width: 3),
+          Expanded(child: _cell(items[1])),
+        ]),
+      );
+    }
+    if (count == 3) {
+      return SizedBox(
+        height: 200,
+        child: Row(children: [
+          Expanded(flex: 3, child: _cell(items[0])),
+          const SizedBox(width: 3),
+          Expanded(
+            flex: 2,
+            child: Column(children: [
+              Expanded(child: _cell(items[1])),
+              const SizedBox(height: 3),
+              Expanded(child: _cell(items[2])),
+            ]),
+          ),
+        ]),
+      );
+    }
+    // 4+ items: 2-column grid, max 4 shown with "+N more" overlay
+    final show = items.take(4).toList();
+    final extra = count - 4;
+    final rows = (show.length / 2).ceil();
+    return Column(
+      children: List.generate(rows, (r) {
+        final a = r * 2;
+        final b = a + 1;
+        final isLastRow = r == rows - 1;
+        return Padding(
+          padding: EdgeInsets.only(top: r > 0 ? 3 : 0),
+          child: SizedBox(
+            height: 140,
+            child: Row(children: [
+              Expanded(child: _cell(show[a])),
+              const SizedBox(width: 3),
+              Expanded(
+                child: b < show.length
+                    ? (isLastRow && extra > 0
+                        ? Stack(fit: StackFit.expand, children: [
+                            _cell(show[b]),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                color: Colors.black54,
+                                alignment: Alignment.center,
+                                child: Text('+$extra',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w900)),
+                              ),
+                            ),
+                          ])
+                        : _cell(show[b]))
+                    : const SizedBox(),
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+/// Ensures the Cloudinary URL uses MP4 container for Android/iOS compatibility.
+/// Avoids vc_h264 re-encode since uploaded videos are already H.264.
+String _toCloudinaryMp4(String url) {
+  if (!url.contains('res.cloudinary.com')) return url;
+  if (url.contains('/upload/f_mp4,vc_h264') ||
+      url.contains('/upload/vc_h264,f_mp4')) {
+    return url;
+  }
+  return url.replaceFirst('/upload/', '/upload/f_mp4,vc_h264/');
+}
+
+Widget _buildProfilePic(String pic, String initials) {
+  final fallback = Center(
+    child: Text(initials,
+        style: const TextStyle(
+            color: appPrimary, fontWeight: FontWeight.w900, fontSize: 15)),
+  );
+  if (pic.startsWith('http://') || pic.startsWith('https://')) {
+    return Image.network(pic,
+        fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+  }
+  try {
+    return Image.memory(base64Decode(pic),
+        fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+  } catch (_) {
+    return fallback;
+  }
+}
+
 class _InlineVideoPlayer extends StatefulWidget {
   const _InlineVideoPlayer({required this.base64Video});
   final String base64Video;
@@ -1918,22 +2061,45 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       VideoPlayerController ctrl;
       final v = widget.base64Video;
       if (v.startsWith('http://') || v.startsWith('https://')) {
-        ctrl = VideoPlayerController.networkUrl(Uri.parse(v));
+        final transformed = _toCloudinaryMp4(v);
+        ctrl = VideoPlayerController.networkUrl(
+          Uri.parse(transformed),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        try {
+          await ctrl.initialize();
+        } catch (_) {
+          // Transformed URL failed — retry with original
+          if (transformed != v) {
+            await ctrl.dispose();
+            ctrl = VideoPlayerController.networkUrl(
+              Uri.parse(v),
+              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+            );
+            await ctrl.initialize();
+          } else {
+            rethrow;
+          }
+        }
       } else {
-        final bytes = base64Decode(v);
+        // base64 — decode and write to temp file
+        final payload = v.contains(',') ? v.split(',').last : v;
+        final bytes = base64Decode(payload);
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/post_video_${widget.hashCode}.mp4');
         await file.writeAsBytes(bytes);
-        ctrl = VideoPlayerController.file(file);
+        ctrl = VideoPlayerController.file(file,
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
+        await ctrl.initialize();
       }
-      await ctrl.initialize();
       if (mounted) {
         setState(() {
           _controller = ctrl;
           _initialized = true;
         });
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[VideoPlayer] init error: $e');
       if (mounted) setState(() => _error = true);
     }
   }
@@ -1966,7 +2132,8 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
           color: Colors.black87,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+        child:
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
     final ctrl = _controller!;

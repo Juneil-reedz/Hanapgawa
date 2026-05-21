@@ -432,12 +432,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     return null;
   }
 
-  Future<void> _openStoryGroup(List<StoryItem> group, int initialIndex) async {
+  Future<void> _openStoryGroup(int groupIndex, int initialIndex) async {
     await showDialog<void>(
       context: context,
       builder: (_) => _StoryViewer(
         api: widget.api,
-        stories: group,
+        storyGroups: _groupedStories,
+        initialGroupIndex: groupIndex,
         initialIndex: initialIndex,
       ),
     );
@@ -812,7 +813,7 @@ class _CircularStoryRow extends StatelessWidget {
 
   final List<List<StoryItem>> groups;
   final VoidCallback onCreate;
-  final void Function(List<StoryItem> group, int index) onOpen;
+  final void Function(int groupIndex, int index) onOpen;
   final String userInitials;
   final String myUserId;
   final String? myProfilePic;
@@ -834,14 +835,15 @@ class _CircularStoryRow extends StatelessWidget {
                   storyImage: myStoryImage,
                   onTap: onCreate);
             }
-            final group = groups[index - 1];
+            final groupIndex = index - 1;
+            final group = groups[groupIndex];
             final isOwn = group.first.userId == myUserId;
             return _StoryCircle(
                 group: group,
                 isOwn: isOwn,
                 contentImage:
                     isOwn ? myStoryImage : _storyContentImage(group.first),
-                onTap: () => onOpen(group, 0));
+                onTap: () => onOpen(groupIndex, 0));
           },
         ),
       );
@@ -1087,19 +1089,24 @@ class _StoryVideoThumb extends StatelessWidget {
 
 String _storyCloudinaryMp4(String url) {
   if (!url.contains('res.cloudinary.com')) return url;
-  if (url.contains('/upload/f_mp4') || url.contains('/upload/vc_')) return url;
-  return url.replaceFirst('/upload/', '/upload/f_mp4/');
+  if (url.contains('/upload/f_mp4,vc_h264') ||
+      url.contains('/upload/vc_h264,f_mp4')) {
+    return url;
+  }
+  return url.replaceFirst('/upload/', '/upload/f_mp4,vc_h264/');
 }
 
 class _StoryViewer extends StatefulWidget {
   const _StoryViewer({
     required this.api,
-    required this.stories,
+    required this.storyGroups,
+    this.initialGroupIndex = 0,
     this.initialIndex = 0,
   });
 
   final MarketplaceApi api;
-  final List<StoryItem> stories;
+  final List<List<StoryItem>> storyGroups;
+  final int initialGroupIndex;
   final int initialIndex;
 
   @override
@@ -1107,21 +1114,28 @@ class _StoryViewer extends StatefulWidget {
 }
 
 class _StoryViewerState extends State<_StoryViewer> {
+  late int _groupIndex;
   late int _index;
   var _viewers = <Map<String, dynamic>>[];
   var _loadingViewers = false;
   String? _floatingReaction;
+  String? _ownerTransition;
   final _player = AudioPlayer();
   VideoPlayerController? _videoController;
   var _musicRequestId = 0;
 
-  StoryItem get _story => widget.stories[_index];
+  List<StoryItem> get _stories => widget.storyGroups[_groupIndex];
+  StoryItem get _story => _stories[_index];
   bool get _isOwner => widget.api.storedUser?.id == _story.userId;
 
   @override
   void initState() {
     super.initState();
-    _index = widget.initialIndex.clamp(0, widget.stories.length - 1);
+    _groupIndex = widget.initialGroupIndex.clamp(
+      0,
+      widget.storyGroups.length - 1,
+    );
+    _index = widget.initialIndex.clamp(0, _stories.length - 1);
     _configureStoryAudio();
     _markViewed();
     if (_isOwner) _loadViewers();
@@ -1188,6 +1202,7 @@ class _StoryViewerState extends State<_StoryViewer> {
       if (mounted) {
         setState(() => _videoController = ctrl);
         ctrl.setLooping(true);
+        ctrl.setVolume(1.0);
         ctrl.play();
       } else {
         ctrl.dispose();
@@ -1210,19 +1225,47 @@ class _StoryViewerState extends State<_StoryViewer> {
 
   void _go(int delta) {
     final next = _index + delta;
-    if (next < 0 || next >= widget.stories.length) {
+    var nextGroup = _groupIndex;
+    var nextIndex = next;
+
+    if (next >= _stories.length) {
+      nextGroup = _groupIndex + 1;
+      nextIndex = 0;
+    } else if (next < 0) {
+      nextGroup = _groupIndex - 1;
+      if (nextGroup >= 0) nextIndex = widget.storyGroups[nextGroup].length - 1;
+    }
+
+    if (nextGroup < 0 || nextGroup >= widget.storyGroups.length) {
       Navigator.pop(context);
       return;
     }
+
+    final changedOwner = nextGroup != _groupIndex;
     setState(() {
-      _index = next;
+      _groupIndex = nextGroup;
+      _index = nextIndex;
       _viewers = [];
       _floatingReaction = null;
+      _loadingViewers = false;
     });
+    if (changedOwner) _showOwnerTransition();
     _markViewed();
     if (_isOwner) _loadViewers();
     _playStoryMusic();
     _initStoryVideo();
+  }
+
+  void _showOwnerTransition() {
+    final isMine = _story.userId == widget.api.storedUser?.id;
+    final firstName = _story.fullName.split(' ').first;
+    setState(() {
+      _ownerTransition =
+          isMine ? 'Back to your story' : 'Other user story: $firstName';
+    });
+    Future<void>.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _ownerTransition = null);
+    });
   }
 
   Future<void> _loadViewers() async {
@@ -1257,7 +1300,7 @@ class _StoryViewerState extends State<_StoryViewer> {
     final background = story.metadata['backgroundColor'] is int
         ? Color(story.metadata['backgroundColor'] as int)
         : appPrimary;
-    final total = widget.stories.length;
+    final total = _stories.length;
 
     return Dialog.fullscreen(
       backgroundColor: Colors.black,
@@ -1375,6 +1418,56 @@ class _StoryViewerState extends State<_StoryViewer> {
                         const TextStyle(color: Colors.white70, fontSize: 12)),
             ]),
           ),
+          if (_ownerTransition != null)
+            Positioned(
+              top: 78,
+              left: 28,
+              right: 28,
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 220),
+                builder: (_, value, child) => Opacity(
+                  opacity: value,
+                  child: Transform.translate(
+                    offset: Offset(0, -8 * (1 - value)),
+                    child: child,
+                  ),
+                ),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(235),
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 18,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(
+                      _isOwner ? Icons.person_outline : Icons.group_outlined,
+                      color: appPrimary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _ownerTransition!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF1F1F1F),
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
           // Close button
           Positioned(
             top: 8,

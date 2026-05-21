@@ -127,11 +127,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       } else {
         // Revert optimistic update
         if (mounted) {
-          setState(() { _liked = prevLiked; _likeCount = prevCount; });
+          setState(() {
+            _liked = prevLiked;
+            _likeCount = prevCount;
+          });
           widget.onLikeChanged(prevLiked, prevCount);
         }
-        messenger.showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -171,7 +173,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         });
         _commentCtrl.clear();
         if (mounted) {
-          setState(() { _replyingTo = null; _commentGifUrl = null; });
+          setState(() {
+            _replyingTo = null;
+            _commentGifUrl = null;
+          });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Row(children: [
               Icon(Icons.sync, color: Colors.white, size: 16),
@@ -183,8 +188,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           ));
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -298,8 +303,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(friendlyError(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     }
   }
 
@@ -346,8 +351,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(friendlyError(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     }
   }
 
@@ -369,7 +374,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
     if (confirmed != true) return;
     if (!SyncService.instance.isOnline) {
-      await LocalDb.instance.queueAction('delete_comment', {'commentId': comment.id});
+      await LocalDb.instance
+          .queueAction('delete_comment', {'commentId': comment.id});
       if (!mounted) return;
       setState(() => _comments.removeWhere((c) => c.id == comment.id));
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -389,7 +395,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('delete_comment', {'commentId': comment.id});
+        await LocalDb.instance
+            .queueAction('delete_comment', {'commentId': comment.id});
         if (!mounted) return;
         setState(() => _comments.removeWhere((c) => c.id == comment.id));
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -401,8 +408,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           backgroundColor: Colors.orange,
         ));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -462,13 +469,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               child: ClipOval(
                 child: post.profilePic != null
                     ? (post.profilePic!.startsWith('http')
-                        ? Image.network(post.profilePic!, fit: BoxFit.cover,
+                        ? Image.network(post.profilePic!,
+                            fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Center(
                                 child: Text(initials,
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w800))))
-                        : Image.memory(base64Decode(post.profilePic!), fit: BoxFit.cover,
+                        : Image.memory(base64Decode(post.profilePic!),
+                            fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Center(
                                 child: Text(initials,
                                     style: const TextStyle(
@@ -518,22 +527,32 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         : null)),
           ),
         ],
-        if (post.image != null) ...[
+        if (post.metadata['mediaItems'] is List &&
+            (post.metadata['mediaItems'] as List).isNotEmpty) ...[
           const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: post.image!.startsWith('http')
-                ? Image.network(post.image!, fit: BoxFit.cover,
-                    width: double.infinity,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink())
-                : Image.memory(base64Decode(post.image!), fit: BoxFit.cover,
-                    width: double.infinity,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-          ),
-        ],
-        if (post.video != null) ...[
-          const SizedBox(height: 10),
-          _InlineVideoPlayer(video: post.video!),
+          _PostMediaGrid(
+              items: List<Map<String, dynamic>>.from(
+                  post.metadata['mediaItems'] as List)),
+        ] else ...[
+          if (post.image != null) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: post.image!.startsWith('http')
+                  ? Image.network(post.image!,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                  : Image.memory(base64Decode(post.image!),
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+            ),
+          ],
+          if (post.video != null) ...[
+            const SizedBox(height: 10),
+            _InlineVideoPlayer(video: post.video!),
+          ],
         ],
         if (post.sharedSnapshot != null) ...[
           const SizedBox(height: 10),
@@ -592,8 +611,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             onPressed: () => showModalBottomSheet<void>(
               context: context,
               isScrollControlled: true,
-              builder: (context) =>
-                  BookingSheet(api: widget.api, target: BookingTarget.fromListing(listing)),
+              builder: (context) => BookingSheet(
+                  api: widget.api, target: BookingTarget.fromListing(listing)),
             ),
             child: const Text('Book'),
           ),
@@ -684,14 +703,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         builder: (_, ctrl) => Column(children: [
           const SizedBox(height: 8),
           Container(
-              width: 36, height: 4,
+              width: 36,
+              height: 4,
               decoration: BoxDecoration(
                   color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2))),
           const SizedBox(height: 12),
           Text(title,
-              style: const TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 16)),
+              style:
+                  const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
           const SizedBox(height: 8),
           if (people.isEmpty)
             const Padding(
@@ -710,13 +730,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   final initials = name.trim().isEmpty
                       ? '?'
                       : name.trim().split(' ').length >= 2
-                          ? '${name.trim().split(' ').first[0]}${name.trim().split(' ').last[0]}'.toUpperCase()
+                          ? '${name.trim().split(' ').first[0]}${name.trim().split(' ').last[0]}'
+                              .toUpperCase()
                           : name[0].toUpperCase();
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor: appPrimary,
                       backgroundImage: pic != null && pic.startsWith('http')
-                          ? NetworkImage(pic) : null,
+                          ? NetworkImage(pic)
+                          : null,
                       child: pic == null || !pic.startsWith('http')
                           ? Text(initials,
                               style: const TextStyle(
@@ -748,22 +770,19 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               if (_likeCount > 0)
                 GestureDetector(
                   onTap: () => _showReactorSheet(
-                      '$_likeCount Like${_likeCount == 1 ? '' : 's'}',
-                      _likers),
+                      '$_likeCount Like${_likeCount == 1 ? '' : 's'}', _likers),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Container(
                       width: 20,
                       height: 20,
                       decoration: BoxDecoration(
-                          color: Colors.red.shade400,
-                          shape: BoxShape.circle),
+                          color: Colors.red.shade400, shape: BoxShape.circle),
                       child: const Icon(Icons.favorite,
                           color: Colors.white, size: 12),
                     ),
                     const SizedBox(width: 4),
                     Text('$_likeCount',
-                        style: const TextStyle(
-                            fontSize: 13, color: appMuted)),
+                        style: const TextStyle(fontSize: 13, color: appMuted)),
                   ]),
                 ),
               if (_likeCount > 0 && _sharers.isNotEmpty)
@@ -775,8 +794,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       _sharers),
                   child: Text(
                       '${_sharers.length} Share${_sharers.length == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                          fontSize: 13, color: appMuted)),
+                      style: const TextStyle(fontSize: 13, color: appMuted)),
                 ),
             ]),
           ),
@@ -811,9 +829,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     style: TextStyle(
                         fontSize: 13,
                         color: appMuted,
-                        decoration: isSocialPost
-                            ? TextDecoration.underline
-                            : null)),
+                        decoration:
+                            isSocialPost ? TextDecoration.underline : null)),
               ),
               const SizedBox(width: 16),
             ]),
@@ -828,8 +845,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               onPressed: () {
                 if (widget.api.token.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Log in to share posts.')));
+                      const SnackBar(content: Text('Log in to share posts.')));
                   return;
                 }
                 final outerContext = context;
@@ -854,10 +870,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   ),
                 );
               },
-              icon: const Icon(Icons.share_outlined,
-                  size: 20, color: appMuted),
-              label: const Text('Share',
-                  style: TextStyle(color: appMuted)),
+              icon: const Icon(Icons.share_outlined, size: 20, color: appMuted),
+              label: const Text('Share', style: TextStyle(color: appMuted)),
               style: TextButton.styleFrom(
                   padding: EdgeInsets.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap),
@@ -1296,6 +1310,124 @@ class _CommentActions extends StatelessWidget {
       );
 }
 
+String _toCloudinaryMp4(String url) {
+  if (!url.contains('res.cloudinary.com')) return url;
+  if (url.contains('/upload/f_mp4,vc_h264') ||
+      url.contains('/upload/vc_h264,f_mp4')) {
+    return url;
+  }
+  return url.replaceFirst('/upload/', '/upload/f_mp4,vc_h264/');
+}
+
+// ─── Multi-media grid (detail display) ────────────────────────────────────────
+
+class _PostMediaGrid extends StatelessWidget {
+  const _PostMediaGrid({required this.items});
+  final List<Map<String, dynamic>> items;
+
+  Widget _cell(Map<String, dynamic> item) {
+    final type = item['type']?.toString() ?? 'image';
+    final url = item['url']?.toString() ?? '';
+    if (type == 'video') {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: _InlineVideoPlayer(video: url),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: url.startsWith('http')
+          ? Image.network(url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  const ColoredBox(color: Colors.black12))
+          : Image.memory(base64Decode(url),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  const ColoredBox(color: Colors.black12)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = items.length;
+    if (count == 1) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 360),
+        child: _cell(items[0]),
+      );
+    }
+    if (count == 2) {
+      return SizedBox(
+        height: 220,
+        child: Row(children: [
+          Expanded(child: _cell(items[0])),
+          const SizedBox(width: 3),
+          Expanded(child: _cell(items[1])),
+        ]),
+      );
+    }
+    if (count == 3) {
+      return SizedBox(
+        height: 220,
+        child: Row(children: [
+          Expanded(flex: 3, child: _cell(items[0])),
+          const SizedBox(width: 3),
+          Expanded(
+            flex: 2,
+            child: Column(children: [
+              Expanded(child: _cell(items[1])),
+              const SizedBox(height: 3),
+              Expanded(child: _cell(items[2])),
+            ]),
+          ),
+        ]),
+      );
+    }
+    final show = items.take(4).toList();
+    final extra = count - 4;
+    final rows = (show.length / 2).ceil();
+    return Column(
+      children: List.generate(rows, (r) {
+        final a = r * 2;
+        final b = a + 1;
+        final isLastRow = r == rows - 1;
+        return Padding(
+          padding: EdgeInsets.only(top: r > 0 ? 3 : 0),
+          child: SizedBox(
+            height: 160,
+            child: Row(children: [
+              Expanded(child: _cell(show[a])),
+              const SizedBox(width: 3),
+              Expanded(
+                child: b < show.length
+                    ? (isLastRow && extra > 0
+                        ? Stack(fit: StackFit.expand, children: [
+                            _cell(show[b]),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                color: Colors.black54,
+                                alignment: Alignment.center,
+                                child: Text('+$extra',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.w900)),
+                              ),
+                            ),
+                          ])
+                        : _cell(show[b]))
+                    : const SizedBox(),
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+}
+
 class _InlineVideoPlayer extends StatefulWidget {
   const _InlineVideoPlayer({required this.video});
   final String video;
@@ -1320,17 +1452,43 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       VideoPlayerController ctrl;
       final v = widget.video;
       if (v.startsWith('http://') || v.startsWith('https://')) {
-        ctrl = VideoPlayerController.networkUrl(Uri.parse(v));
+        final transformed = _toCloudinaryMp4(v);
+        ctrl = VideoPlayerController.networkUrl(
+          Uri.parse(transformed),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        try {
+          await ctrl.initialize();
+        } catch (_) {
+          if (transformed != v) {
+            await ctrl.dispose();
+            ctrl = VideoPlayerController.networkUrl(
+              Uri.parse(v),
+              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+            );
+            await ctrl.initialize();
+          } else {
+            rethrow;
+          }
+        }
       } else {
-        final bytes = base64Decode(v);
+        final payload = v.contains(',') ? v.split(',').last : v;
+        final bytes = base64Decode(payload);
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/detail_video_${widget.hashCode}.mp4');
         await file.writeAsBytes(bytes);
-        ctrl = VideoPlayerController.file(file);
+        ctrl = VideoPlayerController.file(file,
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
+        await ctrl.initialize();
       }
-      await ctrl.initialize();
-      if (mounted) setState(() { _controller = ctrl; _initialized = true; });
-    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _controller = ctrl;
+          _initialized = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('[VideoPlayer] detail init error: $e');
       if (mounted) setState(() => _error = true);
     }
   }
@@ -1346,22 +1504,28 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     if (_error) {
       return Container(
         height: 80,
-        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-        child: const Center(child: Text('Could not load video', style: TextStyle(color: Colors.white70))),
+        decoration: BoxDecoration(
+            color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+        child: const Center(
+            child: Text('Could not load video',
+                style: TextStyle(color: Colors.white70))),
       );
     }
     if (!_initialized || _controller == null) {
       return Container(
         height: 120,
-        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+        decoration: BoxDecoration(
+            color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+        child:
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
     final ctrl = _controller!;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Stack(alignment: Alignment.center, children: [
-        AspectRatio(aspectRatio: ctrl.value.aspectRatio, child: VideoPlayer(ctrl)),
+        AspectRatio(
+            aspectRatio: ctrl.value.aspectRatio, child: VideoPlayer(ctrl)),
         ValueListenableBuilder<VideoPlayerValue>(
           valueListenable: ctrl,
           builder: (_, value, __) => GestureDetector(
@@ -1371,9 +1535,11 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
               child: value.isPlaying
                   ? const SizedBox.shrink()
                   : Container(
-                      decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                      decoration: const BoxDecoration(
+                          color: Colors.black45, shape: BoxShape.circle),
                       padding: const EdgeInsets.all(12),
-                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 40),
+                      child: const Icon(Icons.play_arrow,
+                          color: Colors.white, size: 40),
                     ),
             ),
           ),
