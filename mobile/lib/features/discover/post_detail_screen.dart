@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/api/marketplace_api.dart';
 import '../../core/local/local_db.dart';
@@ -530,23 +533,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         ],
         if (post.video != null) ...[
           const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-                color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-            child: Row(children: [
-              const Icon(Icons.play_circle_fill, color: Colors.white, size: 34),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Video attached (${(post.video!.length * 3 / 4 / 1024 / 1024).toStringAsFixed(1)} MB)',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ]),
-          ),
+          _InlineVideoPlayer(video: post.video!),
         ],
         if (post.sharedSnapshot != null) ...[
           const SizedBox(height: 10),
@@ -1307,4 +1294,91 @@ class _CommentActions extends StatelessWidget {
           ],
         ],
       );
+}
+
+class _InlineVideoPlayer extends StatefulWidget {
+  const _InlineVideoPlayer({required this.video});
+  final String video;
+
+  @override
+  State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
+}
+
+class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      VideoPlayerController ctrl;
+      final v = widget.video;
+      if (v.startsWith('http://') || v.startsWith('https://')) {
+        ctrl = VideoPlayerController.networkUrl(Uri.parse(v));
+      } else {
+        final bytes = base64Decode(v);
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/detail_video_${widget.hashCode}.mp4');
+        await file.writeAsBytes(bytes);
+        ctrl = VideoPlayerController.file(file);
+      }
+      await ctrl.initialize();
+      if (mounted) setState(() { _controller = ctrl; _initialized = true; });
+    } catch (_) {
+      if (mounted) setState(() => _error = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return Container(
+        height: 80,
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+        child: const Center(child: Text('Could not load video', style: TextStyle(color: Colors.white70))),
+      );
+    }
+    if (!_initialized || _controller == null) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+    final ctrl = _controller!;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(alignment: Alignment.center, children: [
+        AspectRatio(aspectRatio: ctrl.value.aspectRatio, child: VideoPlayer(ctrl)),
+        ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: ctrl,
+          builder: (_, value, __) => GestureDetector(
+            onTap: () => value.isPlaying ? ctrl.pause() : ctrl.play(),
+            child: Container(
+              color: Colors.transparent,
+              child: value.isPlaying
+                  ? const SizedBox.shrink()
+                  : Container(
+                      decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                      padding: const EdgeInsets.all(12),
+                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 40),
+                    ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
 }
