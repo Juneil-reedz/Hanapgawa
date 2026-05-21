@@ -63,11 +63,12 @@ async function createVerificationCode(user) {
     emailResult = await sendEmailVerificationCode({ email: user.email, code });
   } catch (error) {
     emailResult = { sent: false, reason: error.message };
-    console.warn(`Email verification send failed for ${user.email}: ${error.message}`);
   }
 
+  // Always log the code so it can be used as fallback if email fails
+  console.log(`[auth] Verification code for ${user.email}: ${code} (emailSent: ${emailResult.sent})`);
   if (!emailResult.sent) {
-    console.log(`HanapGawa email verification code for ${user.email}: ${code}`);
+    console.warn(`[auth] Email delivery failed — reason: ${emailResult.reason || 'unknown'}`);
   }
 
   return { code, expiresAt, emailSent: emailResult.sent };
