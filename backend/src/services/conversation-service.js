@@ -26,9 +26,7 @@ async function startConversation({ initiatorUserId, targetUserId, serviceListing
   if (!target) throw new HttpError(404, 'User not found.');
   if (initiatorUserId === targetUserId) throw new HttpError(400, 'Cannot message yourself.');
 
-  // Only allow messaging between mutual follows (friends)
-  const friends = await areMutualFollows(initiatorUserId, targetUserId);
-  if (!friends) throw new HttpError(403, 'You can only message people who follow you back.');
+  // Messaging is open to all users — no follow requirement
 
   // Reuse existing conversation between these two users instead of creating a duplicate
   const existing = await findConversationBetweenUsers(initiatorUserId, targetUserId);
