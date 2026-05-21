@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
@@ -145,9 +144,12 @@ class SyncService {
       case 'create_social_post':
         await api.createSocialPost(
           p['body'] as String? ?? '',
+          image: p['image'] as String?,
+          video: p['video'] as String?,
           privacy: p['privacy'] as String?,
-          metadata:
-              p['metadata'] != null ? Map<String, dynamic>.from(p['metadata'] as Map) : null,
+          metadata: p['metadata'] != null
+              ? Map<String, dynamic>.from(p['metadata'] as Map)
+              : null,
           sharedFromType: p['sharedFromType'] as String?,
           sharedFromId: p['sharedFromId'] as String?,
         );

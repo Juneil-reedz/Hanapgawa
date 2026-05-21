@@ -113,15 +113,15 @@ class MarketplaceApi {
   Future<List<Map<String, dynamic>>> getPostLikers(
       String itemType, String itemId) async {
     final json = await _get('/feed/$itemType/$itemId/likers');
-    return List<Map<String, dynamic>>.from(
-        (json['likers'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)));
+    return List<Map<String, dynamic>>.from((json['likers'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map)));
   }
 
   Future<List<Map<String, dynamic>>> getPostSharers(
       String itemType, String itemId) async {
     final json = await _get('/feed/$itemType/$itemId/sharers');
-    return List<Map<String, dynamic>>.from(
-        (json['sharers'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)));
+    return List<Map<String, dynamic>>.from((json['sharers'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map)));
   }
 
   Future<List<PostComment>> getPostComments(
@@ -292,18 +292,24 @@ class MarketplaceApi {
 
   Future<void> updateBookingStatus(String bookingId, String status,
           {String? cancellationReason}) async =>
-      _patch('/bookings/$bookingId/status', {
-        'status': status,
-        if (cancellationReason != null && cancellationReason.isNotEmpty)
-          'cancellationReason': cancellationReason,
-      }, auth: true);
+      _patch(
+          '/bookings/$bookingId/status',
+          {
+            'status': status,
+            if (cancellationReason != null && cancellationReason.isNotEmpty)
+              'cancellationReason': cancellationReason,
+          },
+          auth: true);
 
-  Future<void> rescheduleBooking(
-          String bookingId, DateTime scheduledAt, String rescheduleNote) async =>
-      _patch('/bookings/$bookingId/reschedule', {
-        'scheduledAt': scheduledAt.toUtc().toIso8601String(),
-        'rescheduleNote': rescheduleNote,
-      }, auth: true);
+  Future<void> rescheduleBooking(String bookingId, DateTime scheduledAt,
+          String rescheduleNote) async =>
+      _patch(
+          '/bookings/$bookingId/reschedule',
+          {
+            'scheduledAt': scheduledAt.toUtc().toIso8601String(),
+            'rescheduleNote': rescheduleNote,
+          },
+          auth: true);
 
   Future<void> repostBooking(String bookingId, JobPostPayload payload) async =>
       _post('/bookings/$bookingId/repost', payload.toJson(), auth: true);
@@ -362,15 +368,13 @@ class MarketplaceApi {
 
   Future<List<ConversationNickname>> getConversationNicknames(
       String conversationId) async {
-    final json =
-        await _get('/inquiries/$conversationId/nicknames', auth: true);
+    final json = await _get('/inquiries/$conversationId/nicknames', auth: true);
     return listOf(json['nicknames'], ConversationNickname.fromJson);
   }
 
   Future<ConversationNickname?> setConversationNickname(
       String conversationId, String targetUserId, String nickname) async {
-    final json = await _put(
-        '/inquiries/$conversationId/nicknames',
+    final json = await _put('/inquiries/$conversationId/nicknames',
         {'targetUserId': targetUserId, 'nickname': nickname},
         auth: true);
     final raw = json['nickname'];
@@ -379,8 +383,7 @@ class MarketplaceApi {
 
   Future<void> deleteConversationNickname(
           String conversationId, String targetUserId) async =>
-      _deleteVoid(
-          '/inquiries/$conversationId/nicknames/$targetUserId',
+      _deleteVoid('/inquiries/$conversationId/nicknames/$targetUserId',
           auth: true);
 
   Future<Map<String, dynamic>> startInquiry(
@@ -638,7 +641,8 @@ class MarketplaceApi {
 
   /// Uploads a file (base64 string) directly to Cloudinary and returns the URL.
   /// Falls back to returning the base64 as-is if Cloudinary is not configured.
-  Future<String> uploadToCloudinary(String base64Data, String resourceType) async {
+  Future<String> uploadToCloudinary(
+      String base64Data, String resourceType) async {
     try {
       final sig = await _get('/media/cloudinary-signature', auth: true);
       final cloudName = sig['cloudName'] as String;
@@ -675,6 +679,60 @@ class MarketplaceApi {
       return json['secure_url'] as String? ?? base64Data;
     } catch (_) {
       return base64Data;
+    }
+  }
+
+  /// Uploads a video file directly from its path to Cloudinary.
+  /// More efficient than [uploadToCloudinary] for videos — streams from disk
+  /// rather than loading all bytes into memory.
+  Future<String> uploadFileToCloudinary(
+      String filePath, String resourceType) async {
+    try {
+      final sig = await _get('/media/cloudinary-signature', auth: true);
+      final cloudName = sig['cloudName'] as String;
+      final apiKey = sig['apiKey'] as String;
+      final timestamp = sig['timestamp'] as String;
+      final folder = sig['folder'] as String;
+      final signature = sig['signature'] as String;
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/auto/upload'),
+      );
+      request.fields['api_key'] = apiKey;
+      request.fields['timestamp'] = timestamp;
+      request.fields['folder'] = folder;
+      request.fields['signature'] = signature;
+
+      final multiFile = await http.MultipartFile.fromPath(
+        'file',
+        filePath,
+        filename: resourceType == 'video' ? 'upload.mp4' : 'upload.jpg',
+      );
+      request.files.add(multiFile);
+
+      final streamed =
+          await request.send().timeout(const Duration(minutes: 10));
+      final body = await streamed.stream.bytesToString();
+      if (streamed.statusCode >= 400) {
+        return _fileDataUri(filePath, resourceType);
+      }
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      return json['secure_url'] as String? ??
+          await _fileDataUri(filePath, resourceType);
+    } catch (_) {
+      return _fileDataUri(filePath, resourceType);
+    }
+  }
+
+  Future<String> _fileDataUri(String filePath, String resourceType) async {
+    try {
+      final file = File(filePath);
+      final bytes = await file.readAsBytes();
+      final mime = resourceType == 'video' ? 'video/mp4' : 'image/jpeg';
+      return 'data:$mime;base64,${base64Encode(bytes)}';
+    } catch (_) {
+      return '';
     }
   }
 

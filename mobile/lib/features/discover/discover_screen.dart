@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_compress/video_compress.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/api/marketplace_api.dart';
 import '../../core/local/local_db.dart';
@@ -25,16 +27,19 @@ class DiscoverScreen extends StatefulWidget {
       {super.key,
       required this.api,
       required this.onLogout,
-      this.readOnly = false});
+      this.readOnly = false,
+      this.refreshKey = 0});
   final MarketplaceApi api;
   final Future<void> Function() onLogout;
   final bool readOnly;
+  final int refreshKey;
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
 }
 
-class _DiscoverScreenState extends State<DiscoverScreen> {
+class _DiscoverScreenState extends State<DiscoverScreen>
+    with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Feed state
@@ -58,6 +63,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   // Feed category filter
   var _selectedCategory = 'All';
 
+  String? _myProfilePic;
   var _loggingOut = false;
 
   StreamSubscription<bool>? _connectivitySub;
@@ -65,6 +71,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadFeed();
     _loadStories();
     _feedTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -83,12 +90,30 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _feedTimer?.cancel();
     _notifTimer?.cancel();
     _searchDebounce?.cancel();
     _connectivitySub?.cancel();
     _search.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(DiscoverScreen old) {
+    super.didUpdateWidget(old);
+    if (old.refreshKey != widget.refreshKey) {
+      _loadFeed(showSpinner: false);
+      _loadStories();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadFeed(showSpinner: false);
+      _loadStories();
+    }
   }
 
   Future<void> _loadUnreadCount() async {
@@ -257,7 +282,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Future<void> _loadStories() async {
     try {
       final stories = await widget.api.getStories();
-      if (mounted) setState(() => _stories = stories);
+      if (!mounted) return;
+      final myId = widget.api.storedUser?.id ?? '';
+      // Pick up own profile pic from stories if present, else fetch from API
+      String? pic = stories
+          .where((s) => s.userId == myId && s.profilePic != null)
+          .map((s) => s.profilePic!)
+          .firstOrNull;
+      if (pic == null && myId.isNotEmpty) {
+        try {
+          final data = await widget.api.getUserProfileData();
+          pic = data.profilePic;
+        } catch (_) {}
+      }
+      setState(() {
+        _stories = stories;
+        if (pic != null) _myProfilePic = pic;
+      });
     } catch (_) {}
   }
 
@@ -308,16 +349,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         api: widget.api,
         onPosted: ({bool queued = false}) {
           _loadFeed();
-          outerMessenger.showSnackBar(SnackBar(
-            content: queued
-                ? const Row(children: [
-                    Icon(Icons.sync, color: Colors.white, size: 16),
-                    SizedBox(width: 8),
-                    Text('Post queued — will publish when online'),
-                  ])
-                : const Text('Post published!'),
-            backgroundColor: queued ? Colors.orange : null,
-            duration: const Duration(seconds: 3),
+          if (queued) {
+            outerMessenger.showSnackBar(const SnackBar(
+              content: Row(children: [
+                Icon(Icons.sync, color: Colors.white, size: 16),
+                SizedBox(width: 8),
+                Text('Post queued — will publish when online'),
+              ]),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ));
+          }
+        },
+        onPublished: () {
+          _loadFeed();
+          outerMessenger.showSnackBar(const SnackBar(
+            content: Text('Post published!'),
+            duration: Duration(seconds: 3),
           ));
         },
       ),
@@ -358,11 +406,30 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   // Stories grouped by userId, preserving insertion order of first story per user.
   List<List<StoryItem>> get _groupedStories {
+    final myId = widget.api.storedUser?.id ?? '';
     final map = <String, List<StoryItem>>{};
     for (final s in _stories) {
       (map[s.userId] ??= []).add(s);
     }
-    return map.values.toList();
+    final groups = map.values.toList();
+    // Own story group goes first (right after the "My Day" create button)
+    groups.sort((a, b) {
+      if (a.first.userId == myId) return -1;
+      if (b.first.userId == myId) return 1;
+      return 0;
+    });
+    return groups;
+  }
+
+  /// Latest story image/GIF the current user posted (shown in the My Day circle)
+  String? get _myLatestStoryImage {
+    final myId = widget.api.storedUser?.id ?? '';
+    final mine = _stories.where((s) => s.userId == myId);
+    for (final s in mine) {
+      final image = _storyContentImage(s);
+      if (image != null) return image;
+    }
+    return null;
   }
 
   Future<void> _openStoryGroup(List<StoryItem> group, int initialIndex) async {
@@ -420,8 +487,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute<void>(
-                      builder: (_) => const SavedScreen()),
+                  MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
                 );
               },
             ),
@@ -446,8 +512,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.logout, color: Colors.red),
               title: Text(_loggingOut ? 'Logging out…' : 'Log Out',
-                  style: TextStyle(
-                      color: _loggingOut ? Colors.grey : Colors.red)),
+                  style:
+                      TextStyle(color: _loggingOut ? Colors.grey : Colors.red)),
               onTap: _loggingOut
                   ? null
                   : () async {
@@ -634,6 +700,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 onOpen: _openStoryGroup,
                 userInitials: widget.api.storedUser?.initials ?? '?',
                 myUserId: widget.api.storedUser?.id ?? '',
+                myProfilePic: _myProfilePic,
+                myStoryImage: _myLatestStoryImage,
               ),
             );
           }
@@ -738,6 +806,8 @@ class _CircularStoryRow extends StatelessWidget {
     required this.onOpen,
     required this.userInitials,
     required this.myUserId,
+    this.myProfilePic,
+    this.myStoryImage,
   });
 
   final List<List<StoryItem>> groups;
@@ -745,6 +815,8 @@ class _CircularStoryRow extends StatelessWidget {
   final void Function(List<StoryItem> group, int index) onOpen;
   final String userInitials;
   final String myUserId;
+  final String? myProfilePic;
+  final String? myStoryImage;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -756,13 +828,19 @@ class _CircularStoryRow extends StatelessWidget {
           padding: const EdgeInsets.only(right: 16),
           itemBuilder: (context, index) {
             if (index == 0) {
-              return _AddStoryCircle(initials: userInitials, onTap: onCreate);
+              return _AddStoryCircle(
+                  initials: userInitials,
+                  profilePic: myProfilePic,
+                  storyImage: myStoryImage,
+                  onTap: onCreate);
             }
             final group = groups[index - 1];
             final isOwn = group.first.userId == myUserId;
             return _StoryCircle(
                 group: group,
                 isOwn: isOwn,
+                contentImage:
+                    isOwn ? myStoryImage : _storyContentImage(group.first),
                 onTap: () => onOpen(group, 0));
           },
         ),
@@ -770,80 +848,113 @@ class _CircularStoryRow extends StatelessWidget {
 }
 
 class _AddStoryCircle extends StatelessWidget {
-  const _AddStoryCircle({required this.initials, required this.onTap});
+  const _AddStoryCircle({
+    required this.initials,
+    required this.onTap,
+    this.profilePic,
+    this.storyImage,
+  });
 
   final String initials;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: SizedBox(
-          width: 62,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: appBorder, width: 2),
-                      color: appSurface,
-                    ),
-                    child: Center(
-                      child: Text(
-                        initials,
-                        style: const TextStyle(
-                          color: appPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      width: 20,
-                      height: 20,
-                      decoration: const BoxDecoration(
-                          color: appPrimary, shape: BoxShape.circle),
-                      child:
-                          const Icon(Icons.add, color: Colors.white, size: 14),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 5),
-              const Text(
-                'My Day',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-      );
-}
-
-class _StoryCircle extends StatelessWidget {
-  const _StoryCircle(
-      {required this.group, required this.isOwn, required this.onTap});
-
-  final List<StoryItem> group;
-  final bool isOwn;
+  final String? profilePic;
+  final String? storyImage; // latest story content image
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final hasStory = storyImage != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 62,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: hasStory
+                        ? const LinearGradient(
+                            colors: [appPrimary, appSecondary],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    border: hasStory
+                        ? null
+                        : Border.all(color: appBorder, width: 2),
+                    color: hasStory ? null : appSurface,
+                  ),
+                  padding:
+                      hasStory ? const EdgeInsets.all(2.5) : EdgeInsets.zero,
+                  child: ClipOval(
+                    child: Container(
+                      color: hasStory ? Colors.white : null,
+                      child: ClipOval(
+                        child: profilePic != null
+                            ? _storyProfilePic(profilePic!, initials)
+                            : Center(
+                                child: Text(
+                                  initials,
+                                  style: const TextStyle(
+                                    color: appPrimary,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: const BoxDecoration(
+                        color: appPrimary, shape: BoxShape.circle),
+                    child: const Icon(Icons.add, color: Colors.white, size: 14),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'My Day',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StoryCircle extends StatelessWidget {
+  const _StoryCircle({
+    required this.group,
+    required this.isOwn,
+    required this.onTap,
+    this.contentImage,
+  });
+
+  final List<StoryItem> group;
+  final bool isOwn;
+  final VoidCallback onTap;
+  final String? contentImage;
+
+  @override
+  Widget build(BuildContext context) {
     final story = group.first;
-    final gif = story.metadata['gif']?.toString();
 
     return GestureDetector(
       onTap: onTap,
@@ -868,17 +979,14 @@ class _StoryCircle extends StatelessWidget {
                 child: Container(
                   color: Colors.white,
                   child: ClipOval(
-                    child: story.image != null
-                        ? Image.memory(base64Decode(story.image!),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                _StoryInitial(story.fullName))
-                        : gif != null
-                            ? Image.network(gif,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    _StoryInitial(story.fullName))
-                            : _StoryInitial(story.fullName),
+                    child: contentImage != null
+                        ? _storyImage(contentImage!, story.fullName)
+                        : story.video != null
+                            ? const _StoryVideoThumb()
+                            : story.profilePic != null
+                                ? _storyProfilePic(
+                                    story.profilePic!, story.fullName)
+                                : _StoryInitial(story.fullName),
                   ),
                 ),
               ),
@@ -897,6 +1005,51 @@ class _StoryCircle extends StatelessWidget {
   }
 }
 
+String? _storyContentImage(StoryItem story) {
+  if (story.image != null) return story.image;
+  final gif = story.metadata['gif']?.toString();
+  if (gif != null && gif.isNotEmpty) return gif;
+  return null;
+}
+
+bool _isRemoteUrl(String value) =>
+    value.startsWith('http://') || value.startsWith('https://');
+
+Widget _storyImage(String src, String fallbackName) {
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    return Image.network(src,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => fallbackName.isEmpty
+            ? const SizedBox.shrink()
+            : _StoryInitial(fallbackName));
+  }
+  try {
+    return Image.memory(base64Decode(src),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => fallbackName.isEmpty
+            ? const SizedBox.shrink()
+            : _StoryInitial(fallbackName));
+  } catch (_) {
+    return fallbackName.isEmpty
+        ? const SizedBox.shrink()
+        : _StoryInitial(fallbackName);
+  }
+}
+
+Widget _storyProfilePic(String src, String name) {
+  final fallback = _StoryInitial(name);
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    return Image.network(src,
+        fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+  }
+  try {
+    return Image.memory(base64Decode(src),
+        fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+  } catch (_) {
+    return fallback;
+  }
+}
+
 class _StoryInitial extends StatelessWidget {
   const _StoryInitial(this.name);
   final String name;
@@ -912,6 +1065,30 @@ class _StoryInitial extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _StoryVideoThumb extends StatelessWidget {
+  const _StoryVideoThumb();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF111827), appPrimary],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: const Center(
+          child: Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
+        ),
+      );
+}
+
+String _storyCloudinaryMp4(String url) {
+  if (!url.contains('res.cloudinary.com')) return url;
+  if (url.contains('/upload/f_mp4') || url.contains('/upload/vc_')) return url;
+  return url.replaceFirst('/upload/', '/upload/f_mp4/');
 }
 
 class _StoryViewer extends StatefulWidget {
@@ -935,6 +1112,8 @@ class _StoryViewerState extends State<_StoryViewer> {
   var _loadingViewers = false;
   String? _floatingReaction;
   final _player = AudioPlayer();
+  VideoPlayerController? _videoController;
+  var _musicRequestId = 0;
 
   StoryItem get _story => widget.stories[_index];
   bool get _isOwner => widget.api.storedUser?.id == _story.userId;
@@ -943,26 +1122,82 @@ class _StoryViewerState extends State<_StoryViewer> {
   void initState() {
     super.initState();
     _index = widget.initialIndex.clamp(0, widget.stories.length - 1);
+    _configureStoryAudio();
     _markViewed();
     if (_isOwner) _loadViewers();
     _playStoryMusic();
+    _initStoryVideo();
+  }
+
+  Future<void> _configureStoryAudio() async {
+    await _player.setAudioContext(AudioContext(
+      android: const AudioContextAndroid(
+        contentType: AndroidContentType.music,
+        usageType: AndroidUsageType.media,
+        audioFocus: AndroidAudioFocus.gain,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: const {AVAudioSessionOptions.mixWithOthers},
+      ),
+    ));
   }
 
   Future<void> _playStoryMusic() async {
-    final url = _story.metadata['musicUrl']?.toString();
+    final requestId = ++_musicRequestId;
+    var url = (_story.metadata['musicUrl'] ?? _story.metadata['previewUrl'])
+        ?.toString();
+    if (url == null || url.isEmpty) {
+      final music = _story.metadata['music']?.toString();
+      if (music != null && music.isNotEmpty) {
+        try {
+          final tracks = await widget.api.searchMusic(music);
+          if (requestId != _musicRequestId) return;
+          url = tracks
+              .map((track) => track['previewUrl']?.toString() ?? '')
+              .firstWhere((preview) => preview.isNotEmpty, orElse: () => '');
+        } catch (_) {}
+      }
+    }
     if (url == null || url.isEmpty) {
       _player.stop();
       return;
     }
     try {
+      await _configureStoryAudio();
       await _player.stop();
       await _player.setVolume(1.0);
+      await _player.setReleaseMode(ReleaseMode.loop);
       await _player.play(UrlSource(url));
+    } catch (_) {}
+  }
+
+  Future<void> _initStoryVideo() async {
+    final old = _videoController;
+    _videoController = null;
+    old?.dispose();
+
+    final url = _story.video;
+    if (url == null || url.isEmpty) return;
+    try {
+      final ctrl = VideoPlayerController.networkUrl(
+        Uri.parse(_storyCloudinaryMp4(url)),
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      await ctrl.initialize();
+      if (mounted) {
+        setState(() => _videoController = ctrl);
+        ctrl.setLooping(true);
+        ctrl.play();
+      } else {
+        ctrl.dispose();
+      }
     } catch (_) {}
   }
 
   @override
   void dispose() {
+    _videoController?.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -987,6 +1222,7 @@ class _StoryViewerState extends State<_StoryViewer> {
     _markViewed();
     if (_isOwner) _loadViewers();
     _playStoryMusic();
+    _initStoryVideo();
   }
 
   Future<void> _loadViewers() async {
@@ -1032,14 +1268,25 @@ class _StoryViewerState extends State<_StoryViewer> {
             child: Container(
               color: background,
               child: story.image != null
-                  ? Image.memory(base64Decode(story.image!),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                  ? _storyImage(story.image!, '')
                   : gif != null
                       ? Image.network(gif,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => const SizedBox.shrink())
-                      : null,
+                      : story.video != null
+                          ? _videoController?.value.isInitialized == true
+                              ? FittedBox(
+                                  fit: BoxFit.cover,
+                                  child: SizedBox(
+                                    width: _videoController!.value.size.width,
+                                    height: _videoController!.value.size.height,
+                                    child: VideoPlayer(_videoController!),
+                                  ),
+                                )
+                              : const Center(
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white))
+                          : null,
             ),
           ),
           // Gradient overlay
@@ -1099,10 +1346,14 @@ class _StoryViewerState extends State<_StoryViewer> {
             left: 16,
             right: 56,
             child: Row(children: [
-              CircleAvatar(
-                backgroundColor: appPrimary,
-                child: Text(story.fullName.isEmpty ? '?' : story.fullName[0],
-                    style: const TextStyle(color: Colors.white)),
+              ClipOval(
+                child: SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: story.profilePic != null
+                      ? _storyProfilePic(story.profilePic!, story.fullName)
+                      : _StoryInitial(story.fullName),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1490,6 +1741,7 @@ class _StoryComposeSheet extends StatefulWidget {
 class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   final _bodyCtrl = TextEditingController();
   Uint8List? _imageBytes;
+  String? _videoPath;
   String? _gif;
   String? _location;
   String? _music;
@@ -1524,7 +1776,44 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
         imageQuality: 80);
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
-    setState(() => _imageBytes = bytes);
+    setState(() {
+      _imageBytes = bytes;
+      _videoPath = null;
+      _gif = null;
+    });
+  }
+
+  Future<void> _pickVideo() async {
+    final file = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    if (file == null || !mounted) return;
+    setState(() {
+      _posting = true;
+      _error = null;
+    });
+    try {
+      final info = await VideoCompress.compressVideo(
+        file.path,
+        quality: VideoQuality.MediumQuality,
+        deleteOrigin: false,
+        includeAudio: true,
+      );
+      final path = info?.file?.path ?? file.path;
+      if (!mounted) return;
+      setState(() {
+        _posting = false;
+        _videoPath = path;
+        _imageBytes = null;
+        _gif = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _posting = false;
+        _videoPath = file.path;
+        _imageBytes = null;
+        _gif = null;
+      });
+    }
   }
 
   Future<void> _addGif() async {
@@ -1542,7 +1831,13 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
             item['previewUrl']?.toString() ?? item['url']?.toString(),
       ),
     );
-    if (item != null) setState(() => _gif = item['url']?.toString());
+    if (item != null) {
+      setState(() {
+        _gif = item['url']?.toString();
+        _imageBytes = null;
+        _videoPath = null;
+      });
+    }
   }
 
   Future<void> _addLocation() async {
@@ -1581,17 +1876,31 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       ),
     );
     if (item != null) {
+      final previewUrl = item['previewUrl']?.toString() ?? '';
+      if (previewUrl.isEmpty) {
+        setState(() => _error = 'This track has no playable preview.');
+        return;
+      }
       setState(() {
         _music = '${item['title'] ?? 'Track'} - ${item['artist'] ?? 'Artist'}';
-        _musicUrl = item['previewUrl']?.toString();
+        _musicUrl = previewUrl;
+        _error = null;
       });
     }
   }
 
   Future<void> _submit() async {
     final text = _bodyCtrl.text.trim();
-    if (text.isEmpty && _imageBytes == null && _gif == null) {
-      setState(() => _error = 'Add text, photo, or GIF to your story.');
+    if (text.isEmpty &&
+        _imageBytes == null &&
+        _videoPath == null &&
+        _gif == null) {
+      setState(() => _error = 'Add text, photo, video, or GIF to your story.');
+      return;
+    }
+    if (_videoPath != null && !SyncService.instance.isOnline) {
+      setState(
+          () => _error = 'Connect to the internet to upload video stories.');
       return;
     }
     setState(() => _posting = true);
@@ -1616,9 +1925,16 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       return;
     }
     try {
+      final video = _videoPath == null
+          ? null
+          : await widget.api.uploadFileToCloudinary(_videoPath!, 'video');
+      if (_videoPath != null && (video == null || video.isEmpty)) {
+        throw Exception('Video upload failed.');
+      }
       await widget.api.createStory(
         body: text,
         image: image,
+        video: video,
         metadata: metadata,
         privacy: _privacy,
       );
@@ -1628,6 +1944,14 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
+        if (_videoPath != null) {
+          setState(() {
+            _posting = false;
+            _error =
+                'Video upload failed. Please check your connection and try again.';
+          });
+          return;
+        }
         await LocalDb.instance.queueAction('create_story', {
           'body': text,
           if (image != null) 'image': image,
@@ -1638,14 +1962,17 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
         Navigator.pop(context);
         widget.onPosted(queued: true);
       } else {
-        setState(() { _posting = false; _error = friendlyError(e); });
+        setState(() {
+          _posting = false;
+          _error = friendlyError(e);
+        });
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasMedia = _imageBytes != null || _gif != null;
+    final hasMedia = _imageBytes != null || _videoPath != null || _gif != null;
     return SafeArea(
       child: Padding(
         padding:
@@ -1710,6 +2037,24 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                     // Background layer
                     if (_imageBytes != null)
                       Image.memory(_imageBytes!, fit: BoxFit.cover)
+                    else if (_videoPath != null)
+                      Container(
+                        color: Colors.black,
+                        child: const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.play_circle_fill,
+                                  color: Colors.white, size: 56),
+                              SizedBox(height: 8),
+                              Text('Video selected',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                        ),
+                      )
                     else if (_gif != null)
                       Image.network(_gif!,
                           fit: BoxFit.cover,
@@ -1778,6 +2123,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                         child: GestureDetector(
                           onTap: () => setState(() {
                             _imageBytes = null;
+                            _videoPath = null;
                             _gif = null;
                           }),
                           child: Container(
@@ -1909,6 +2255,13 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                   ),
                   const SizedBox(width: 8),
                   _StoryChip(
+                    icon: Icons.videocam_outlined,
+                    label: 'Video',
+                    color: Colors.deepPurple,
+                    onTap: _pickVideo,
+                  ),
+                  const SizedBox(width: 8),
+                  _StoryChip(
                     icon: Icons.gif_box_outlined,
                     label: 'GIF',
                     color: Colors.orange,
@@ -2020,18 +2373,31 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
 // ─── Post Compose Sheet ────────────────────────────────────────────────────────
 
 class _PostComposeSheet extends StatefulWidget {
-  const _PostComposeSheet({required this.api, required this.onPosted});
+  const _PostComposeSheet({
+    required this.api,
+    required this.onPosted,
+    this.onPublished,
+  });
   final MarketplaceApi api;
   final void Function({bool queued}) onPosted;
+  final VoidCallback? onPublished;
 
   @override
   State<_PostComposeSheet> createState() => _PostComposeSheetState();
 }
 
+class _MediaDraft {
+  const _MediaDraft({required this.isVideo, this.bytes, this.filePath})
+      : assert(bytes != null || filePath != null);
+  final bool isVideo;
+  final Uint8List? bytes; // used for images
+  final String?
+      filePath; // used for videos (avoids loading all bytes into memory)
+}
+
 class _PostComposeSheetState extends State<_PostComposeSheet> {
   final _bodyCtrl = TextEditingController();
-  Uint8List? _imageBytes;
-  Uint8List? _videoBytes;
+  final _mediaDrafts = <_MediaDraft>[];
   var _privacy = 'Public';
   String? _feeling;
   String? _location;
@@ -2066,7 +2432,10 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
     super.dispose();
   }
 
+  static const _maxMedia = 6;
+
   Future<void> _pickImage() async {
+    if (_mediaDrafts.length >= _maxMedia) return;
     final file = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       maxWidth: 1200,
@@ -2075,17 +2444,60 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
     );
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
-    setState(() => _imageBytes = bytes);
+    setState(() => _mediaDrafts.add(_MediaDraft(isVideo: false, bytes: bytes)));
   }
 
   Future<void> _pickVideo() async {
-    final file = await ImagePicker().pickVideo(
-      source: ImageSource.gallery,
-      maxDuration: const Duration(minutes: 1),
-    );
+    if (_mediaDrafts.length >= _maxMedia) return;
+    final file = await ImagePicker().pickVideo(source: ImageSource.gallery);
     if (file == null || !mounted) return;
-    final bytes = await file.readAsBytes();
-    setState(() => _videoBytes = bytes);
+    setState(() => _posting = true);
+    try {
+      final info = await VideoCompress.compressVideo(
+        file.path,
+        quality: VideoQuality.MediumQuality,
+        deleteOrigin: false,
+        includeAudio: true,
+      );
+      final path = info?.file?.path ?? file.path;
+      if (mounted)
+        setState(() {
+          _posting = false;
+          _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: path));
+        });
+    } catch (_) {
+      // Compression failed — use original file path
+      if (mounted)
+        setState(() {
+          _posting = false;
+          _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: file.path));
+        });
+    }
+  }
+
+  Future<void> _addMoreMedia() async {
+    if (_mediaDrafts.length >= _maxMedia) return;
+    // Ask image or video
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: const Text('Add photo'),
+            onTap: () => Navigator.pop(ctx, 'image'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.videocam_outlined),
+            title: const Text('Add video'),
+            onTap: () => Navigator.pop(ctx, 'video'),
+          ),
+        ]),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'image') await _pickImage();
+    if (choice == 'video') await _pickVideo();
   }
 
   Future<void> _addTag() async {
@@ -2173,7 +2585,8 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
         },
       ),
     );
-    if (value != null && mounted) setState(() => _gif = value['url']?.toString());
+    if (value != null && mounted)
+      setState(() => _gif = value['url']?.toString());
   }
 
   Future<void> _setBackground() async {
@@ -2302,77 +2715,78 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
         if (_music != null) 'music': _music,
         if (_musicUrl != null) 'musicUrl': _musicUrl,
         if (_sticker != null) 'sticker': _sticker,
-        if (_backgroundColor != null) 'backgroundColor': _backgroundColor!.value,
+        if (_backgroundColor != null)
+          'backgroundColor': _backgroundColor!.value,
       };
 
   Future<void> _submit() async {
     final text = _bodyCtrl.text.trim();
-    if (text.isEmpty && _imageBytes == null && _videoBytes == null) {
+    if (text.isEmpty && _mediaDrafts.isEmpty && _gif == null) {
       setState(() => _error = 'Please write something or attach media.');
       return;
     }
-    final metadata = _metadata();
-    final image = _imageBytes != null ? base64Encode(_imageBytes!) : null;
-    setState(() { _posting = true; _error = null; });
-
-    // Upload video directly to Cloudinary before posting to avoid backend timeout
-    String? video;
-    if (_videoBytes != null) {
-      video = await widget.api.uploadToCloudinary(
-        base64Encode(_videoBytes!), 'video');
-    }
-
-    Future<void> queueAndClose() async {
-      await LocalDb.instance.queueAction('create_social_post', {
-        'body': text,
-        if (image != null) 'image': image,
-        'privacy': _privacy,
-        'metadata': metadata,
-      });
-      // Optimistic feed item so the post appears immediately from cache
-      final user = widget.api.storedUser;
-      final tempId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
-      await LocalDb.instance.cacheFeedItems([{
-        'id': tempId,
-        'type': 'social_post',
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
-        'likeCount': 0, 'commentCount': 0, 'isLiked': false,
-        'socialPost': {
-          'id': tempId,
-          'userId': user?.id ?? '',
-          'fullName': user?.fullName ?? 'You',
-          'body': text, 'privacy': _privacy,
-          'createdAt': DateTime.now().toIso8601String(),
-          if (image != null) 'image': image,
-          'metadata': metadata,
-          'likeCount': 0, 'commentCount': 0,
-        },
-      }]);
-      if (!mounted) return;
-      Navigator.pop(context);
-      widget.onPosted(queued: true);
-    }
-
-    if (!SyncService.instance.isOnline) {
-      await queueAndClose();
+    if (_mediaDrafts.any((draft) => draft.isVideo) &&
+        !SyncService.instance.isOnline) {
+      setState(() => _error = 'Connect to the internet to upload videos.');
       return;
     }
 
+    setState(() {
+      _posting = true;
+      _error = null;
+    });
+
+    final metadata = _metadata();
+    final drafts = List<_MediaDraft>.of(_mediaDrafts);
     try {
+      String? firstImage;
+      String? firstVideo;
+      final mediaItems = <Map<String, String>>[];
+
+      for (final draft in drafts) {
+        final type = draft.isVideo ? 'video' : 'image';
+        final url = draft.isVideo && draft.filePath != null
+            ? await widget.api.uploadFileToCloudinary(draft.filePath!, type)
+            : await widget.api
+                .uploadToCloudinary(base64Encode(draft.bytes!), type);
+        if (url.isEmpty) throw Exception('$type upload failed.');
+        if (_isRemoteUrl(url)) mediaItems.add({'type': type, 'url': url});
+        if (!draft.isVideo && firstImage == null) firstImage = url;
+        if (draft.isVideo && firstVideo == null) firstVideo = url;
+      }
+      if (mediaItems.isNotEmpty) metadata['mediaItems'] = mediaItems;
+
+      if (!SyncService.instance.isOnline) {
+        await LocalDb.instance.queueAction('create_social_post', {
+          'body': text,
+          if (firstImage != null) 'image': firstImage,
+          if (firstVideo != null) 'video': firstVideo,
+          'privacy': _privacy,
+          'metadata': metadata,
+        });
+        if (!mounted) return;
+        Navigator.pop(context);
+        widget.onPosted(queued: true);
+        return;
+      }
+
       await widget.api.createSocialPost(
-        text, image: image, video: video,
-        metadata: metadata, privacy: _privacy,
+        text,
+        image: firstImage,
+        video: firstVideo,
+        metadata: metadata,
+        privacy: _privacy,
       );
       if (!mounted) return;
       Navigator.pop(context);
       widget.onPosted();
+      widget.onPublished?.call();
     } catch (e) {
       if (!mounted) return;
-      if (SyncService.isNetworkError(e)) {
-        await queueAndClose();
-      } else {
-        setState(() { _posting = false; _error = friendlyError(e); });
-      }
+      setState(() {
+        _posting = false;
+        _error = friendlyError(e);
+      });
     }
   }
 
@@ -2476,7 +2890,8 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                           ..._tags.map((tag) => Chip(
                                 avatar: const Icon(Icons.person, size: 14),
                                 label: Text(tag),
-                                onDeleted: () => setState(() => _tags.remove(tag)),
+                                onDeleted: () =>
+                                    setState(() => _tags.remove(tag)),
                               )),
                           if (_feeling != null)
                             Chip(
@@ -2485,20 +2900,24 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                             ),
                           if (_location != null)
                             Chip(
-                              avatar: const Icon(Icons.place_outlined, size: 14),
+                              avatar:
+                                  const Icon(Icons.place_outlined, size: 14),
                               label: Text(_location!),
                               onDeleted: () => setState(() => _location = null),
                             ),
                           if (_gif != null)
                             Chip(
-                              avatar: const Icon(Icons.gif_box_outlined, size: 14),
+                              avatar:
+                                  const Icon(Icons.gif_box_outlined, size: 14),
                               label: const Text('GIF added'),
                               onDeleted: () => setState(() => _gif = null),
                             ),
                           if (_music != null)
                             Chip(
-                              avatar: const Icon(Icons.music_note_outlined, size: 14),
-                              label: Text(_music!, overflow: TextOverflow.ellipsis),
+                              avatar: const Icon(Icons.music_note_outlined,
+                                  size: 14),
+                              label: Text(_music!,
+                                  overflow: TextOverflow.ellipsis),
                               onDeleted: () => setState(() => _music = null),
                             ),
                           if (_sticker != null)
@@ -2507,11 +2926,15 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                                   ? ClipRRect(
                                       borderRadius: BorderRadius.circular(4),
                                       child: Image.network(_sticker!,
-                                          width: 20, height: 20,
+                                          width: 20,
+                                          height: 20,
                                           fit: BoxFit.contain,
                                           errorBuilder: (_, __, ___) =>
-                                              const Icon(Icons.sticky_note_2_outlined, size: 14)))
-                                  : const Icon(Icons.sticky_note_2_outlined, size: 14),
+                                              const Icon(
+                                                  Icons.sticky_note_2_outlined,
+                                                  size: 14)))
+                                  : const Icon(Icons.sticky_note_2_outlined,
+                                      size: 14),
                               label: const Text('Sticker'),
                               onDeleted: () => setState(() => _sticker = null),
                             ),
@@ -2582,58 +3005,17 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                         ),
                       ),
                     ),
-                    // Image preview
-                    if (_imageBytes != null)
+                    // Multi-media preview grid
+                    if (_mediaDrafts.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                        child: Stack(children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.memory(_imageBytes!,
-                                height: 160,
-                                width: double.infinity,
-                                fit: BoxFit.cover),
-                          ),
-                          Positioned(
-                            top: 6,
-                            right: 6,
-                            child: GestureDetector(
-                              onTap: () => setState(() => _imageBytes = null),
-                              child: Container(
-                                decoration: const BoxDecoration(
-                                    color: Colors.black54,
-                                    shape: BoxShape.circle),
-                                padding: const EdgeInsets.all(5),
-                                child: const Icon(Icons.close,
-                                    color: Colors.white, size: 14),
-                              ),
-                            ),
-                          ),
-                        ]),
-                      ),
-                    if (_videoBytes != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: appSurface,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: appBorder),
-                          ),
-                          child: Row(children: [
-                            const Icon(Icons.play_circle_outline,
-                                color: appPrimary),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child: Text(
-                                    'Video attached (${(_videoBytes!.length / 1024 / 1024).toStringAsFixed(1)} MB)')),
-                            IconButton(
-                              onPressed: () =>
-                                  setState(() => _videoBytes = null),
-                              icon: const Icon(Icons.close, size: 18),
-                            ),
-                          ]),
+                        child: _MediaDraftGrid(
+                          drafts: _mediaDrafts,
+                          onRemove: (i) =>
+                              setState(() => _mediaDrafts.removeAt(i)),
+                          onAdd: _mediaDrafts.length < _maxMedia
+                              ? _addMoreMedia
+                              : null,
                         ),
                       ),
                     // Inline error
@@ -2701,28 +3083,31 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                       padding: const EdgeInsets.fromLTRB(8, 8, 12, 16),
                       child: Row(children: [
                         IconButton(
-                          onPressed: _pickImage,
-                          icon: Icon(
-                              _imageBytes != null
-                                  ? Icons.add_photo_alternate
-                                  : Icons.add_photo_alternate_outlined,
-                              color:
-                                  _imageBytes != null ? appPrimary : appMuted),
+                          onPressed: _mediaDrafts.length < _maxMedia
+                              ? _pickImage
+                              : null,
+                          icon: Icon(Icons.add_photo_alternate_outlined,
+                              color: _mediaDrafts.any((d) => !d.isVideo)
+                                  ? appPrimary
+                                  : appMuted),
                           tooltip: 'Attach photo',
                         ),
                         IconButton(
-                          onPressed: _pickVideo,
+                          onPressed: _mediaDrafts.length < _maxMedia
+                              ? _pickVideo
+                              : null,
                           icon: Icon(Icons.video_library_outlined,
-                              color:
-                                  _videoBytes != null ? appPrimary : appMuted),
+                              color: _mediaDrafts.any((d) => d.isVideo)
+                                  ? appPrimary
+                                  : appMuted),
                           tooltip: 'Attach video',
                         ),
                         const Spacer(),
                         FilledButton(
                           onPressed: (_posting ||
                                   (charCount == 0 &&
-                                      _imageBytes == null &&
-                                      _videoBytes == null))
+                                      _mediaDrafts.isEmpty &&
+                                      _gif == null))
                               ? null
                               : _submit,
                           style: FilledButton.styleFrom(
@@ -2730,10 +3115,19 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                                 horizontal: 20, vertical: 10),
                           ),
                           child: _posting
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white))
+                              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                  const SizedBox.square(
+                                      dimension: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2, color: Colors.white)),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                      _mediaDrafts.isEmpty
+                                          ? 'Processing...'
+                                          : 'Uploading...',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800)),
+                                ])
                               : const Text('Post',
                                   style:
                                       TextStyle(fontWeight: FontWeight.w800)),
@@ -2750,6 +3144,141 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
     );
   }
 }
+
+// ─── Media draft grid (composer preview) ──────────────────────────────────────
+
+class _MediaDraftGrid extends StatelessWidget {
+  const _MediaDraftGrid({
+    required this.drafts,
+    required this.onRemove,
+    this.onAdd,
+  });
+  final List<_MediaDraft> drafts;
+  final void Function(int index) onRemove;
+  final VoidCallback? onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = drafts.length;
+    final showAdd = onAdd != null;
+    final cellCount = count + (showAdd ? 1 : 0);
+
+    Widget cell(int i) {
+      if (showAdd && i == count) {
+        return GestureDetector(
+          onTap: onAdd,
+          child: Container(
+            decoration: BoxDecoration(
+              color: appSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: appBorder, width: 1.5),
+            ),
+            child: const Center(
+              child: Icon(Icons.add, color: appPrimary, size: 32),
+            ),
+          ),
+        );
+      }
+      final draft = drafts[i];
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: draft.isVideo
+                ? Container(
+                    color: Colors.black87,
+                    child: const Center(
+                      child: Icon(Icons.play_circle_outline,
+                          color: Colors.white70, size: 36),
+                    ),
+                  )
+                : draft.bytes != null
+                    ? Image.memory(draft.bytes!, fit: BoxFit.cover)
+                    : const ColoredBox(color: Colors.black12),
+          ),
+          if (draft.isVideo)
+            const Positioned(
+              bottom: 6,
+              left: 6,
+              child: Icon(Icons.videocam, color: Colors.white70, size: 18),
+            ),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: GestureDetector(
+              onTap: () => onRemove(i),
+              child: Container(
+                decoration: const BoxDecoration(
+                    color: Colors.black54, shape: BoxShape.circle),
+                padding: const EdgeInsets.all(4),
+                child: const Icon(Icons.close, color: Colors.white, size: 13),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (cellCount == 1) {
+      return SizedBox(
+        height: 180,
+        child: cell(0),
+      );
+    }
+    if (cellCount == 2) {
+      return SizedBox(
+        height: 140,
+        child: Row(children: [
+          Expanded(child: cell(0)),
+          const SizedBox(width: 4),
+          Expanded(child: cell(1)),
+        ]),
+      );
+    }
+    if (cellCount == 3) {
+      return SizedBox(
+        height: 160,
+        child: Row(children: [
+          Expanded(
+            flex: 3,
+            child: cell(0),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            flex: 2,
+            child: Column(children: [
+              Expanded(child: cell(1)),
+              const SizedBox(height: 4),
+              Expanded(child: cell(2)),
+            ]),
+          ),
+        ]),
+      );
+    }
+    // 4+ items: 2-column grid
+    final rows = (cellCount / 2).ceil();
+    return Column(
+      children: List.generate(rows, (r) {
+        final a = r * 2;
+        final b = a + 1;
+        return Padding(
+          padding: EdgeInsets.only(bottom: r < rows - 1 ? 4 : 0),
+          child: SizedBox(
+            height: 110,
+            child: Row(children: [
+              Expanded(child: cell(a)),
+              const SizedBox(width: 4),
+              Expanded(child: b < cellCount ? cell(b) : const SizedBox()),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+// ─── Compose chip ──────────────────────────────────────────────────────────────
 
 class _ComposeChip extends StatelessWidget {
   const _ComposeChip({
@@ -2918,7 +3447,11 @@ class _SearchPickerSheetState extends State<_SearchPickerSheet> {
     setState(() => _loading = true);
     try {
       final r = await widget.loadDefaults!();
-      if (mounted) setState(() { _results = r; _loading = false; });
+      if (mounted)
+        setState(() {
+          _results = r;
+          _loading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -2926,13 +3459,20 @@ class _SearchPickerSheetState extends State<_SearchPickerSheet> {
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    if (value.trim().isEmpty) { _loadDefaults(); return; }
+    if (value.trim().isEmpty) {
+      _loadDefaults();
+      return;
+    }
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       if (!mounted) return;
       setState(() => _loading = true);
       try {
         final found = await widget.search(value.trim());
-        if (mounted) setState(() { _results = found; _loading = false; });
+        if (mounted)
+          setState(() {
+            _results = found;
+            _loading = false;
+          });
       } catch (_) {
         if (mounted) setState(() => _loading = false);
       }
@@ -2954,7 +3494,8 @@ class _SearchPickerSheetState extends State<_SearchPickerSheet> {
             16, 16, 16, 16 + MediaQuery.viewInsetsOf(context).bottom),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
-            width: 36, height: 4,
+            width: 36,
+            height: 4,
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
                 color: Colors.grey.shade300,
@@ -2975,7 +3516,11 @@ class _SearchPickerSheetState extends State<_SearchPickerSheet> {
               suffixIcon: _ctrl.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.close, size: 18),
-                      onPressed: () { _ctrl.clear(); _loadDefaults(); setState(() {}); },
+                      onPressed: () {
+                        _ctrl.clear();
+                        _loadDefaults();
+                        setState(() {});
+                      },
                     )
                   : null,
               border: OutlineInputBorder(
@@ -2989,8 +3534,7 @@ class _SearchPickerSheetState extends State<_SearchPickerSheet> {
           const SizedBox(height: 10),
           if (_loading)
             const Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator())
+                padding: EdgeInsets.all(24), child: CircularProgressIndicator())
           else if (_results.isEmpty)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -3049,7 +3593,11 @@ class _TagPickerSheetState extends State<_TagPickerSheet> {
     setState(() => _loading = true);
     try {
       final r = await widget.api.searchUsers(q.isEmpty ? 'a' : q);
-      if (mounted) setState(() { _results = r; _loading = false; });
+      if (mounted)
+        setState(() {
+          _results = r;
+          _loading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -3076,7 +3624,8 @@ class _TagPickerSheetState extends State<_TagPickerSheet> {
             16, 16, 16, 16 + MediaQuery.viewInsetsOf(context).bottom),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
-            width: 36, height: 4,
+            width: 36,
+            height: 4,
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
                 color: Colors.grey.shade300,
@@ -3097,7 +3646,11 @@ class _TagPickerSheetState extends State<_TagPickerSheet> {
               suffixIcon: _ctrl.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.close, size: 18),
-                      onPressed: () { _ctrl.clear(); _search('a'); setState(() {}); },
+                      onPressed: () {
+                        _ctrl.clear();
+                        _search('a');
+                        setState(() {});
+                      },
                     )
                   : null,
               border: OutlineInputBorder(
@@ -3111,8 +3664,7 @@ class _TagPickerSheetState extends State<_TagPickerSheet> {
           const SizedBox(height: 10),
           if (_loading)
             const Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator())
+                padding: EdgeInsets.all(24), child: CircularProgressIndicator())
           else
             Flexible(
               child: ListView.builder(
@@ -3162,7 +3714,11 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
     setState(() => _loading = true);
     try {
       final r = await widget.api.searchStickers(q);
-      if (mounted) setState(() { _results = r; _loading = false; });
+      if (mounted)
+        setState(() {
+          _results = r;
+          _loading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -3170,8 +3726,8 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400),
-        () => _fetch(value.trim()));
+    _debounce =
+        Timer(const Duration(milliseconds: 400), () => _fetch(value.trim()));
   }
 
   @override
@@ -3192,7 +3748,8 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
       child: SafeArea(
         child: Column(children: [
           Container(
-            width: 36, height: 4,
+            width: 36,
+            height: 4,
             margin: const EdgeInsets.symmetric(vertical: 10),
             decoration: BoxDecoration(
                 color: Colors.grey.shade300,
@@ -3200,7 +3757,8 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Stickers',
                   style: Theme.of(context)
                       .textTheme
@@ -3251,7 +3809,8 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
                         itemCount: _results.length,
                         itemBuilder: (_, i) {
                           final s = _results[i];
-                          final url = (s['previewUrl'] ?? s['url'])?.toString() ?? '';
+                          final url =
+                              (s['previewUrl'] ?? s['url'])?.toString() ?? '';
                           final fullUrl = s['url']?.toString() ?? '';
                           return InkWell(
                             borderRadius: BorderRadius.circular(12),
@@ -3259,7 +3818,8 @@ class _StickerPickerSheetState extends State<_StickerPickerSheet> {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(12),
                               child: url.isNotEmpty
-                                  ? Image.network(url, fit: BoxFit.contain,
+                                  ? Image.network(url,
+                                      fit: BoxFit.contain,
                                       errorBuilder: (_, __, ___) =>
                                           const Icon(Icons.broken_image))
                                   : const Icon(Icons.broken_image),

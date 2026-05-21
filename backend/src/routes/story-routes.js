@@ -1,11 +1,43 @@
 const express = require('express');
+const crypto = require('crypto');
 
 const { asyncHandler } = require('../lib/async-handler');
 const { HttpError } = require('../lib/http-error');
 const { authenticate } = require('../middleware/authenticate');
 const { getPostgresPool } = require('../db/postgres');
+const { env } = require('../config/env');
 
 const router = express.Router();
+
+async function uploadToCloudinary(file, resourceType) {
+  if (!file || file.startsWith('http://') || file.startsWith('https://')) return file;
+  const { cloudinaryCloudName, cloudinaryApiKey, cloudinaryApiSecret } = env;
+  if (!cloudinaryCloudName || !cloudinaryApiKey || !cloudinaryApiSecret) {
+    throw new HttpError(503, 'Media upload is not configured.');
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const folder = 'hanapgawa/stories';
+  const signature = crypto
+    .createHash('sha1')
+    .update(`folder=${folder}&timestamp=${timestamp}${cloudinaryApiSecret}`)
+    .digest('hex');
+  const mime = resourceType === 'video' ? 'video/mp4' : 'image/jpeg';
+  const form = new FormData();
+  form.append('file', file.startsWith('data:') ? file : `data:${mime};base64,${file}`);
+  form.append('api_key', cloudinaryApiKey);
+  form.append('timestamp', timestamp);
+  form.append('folder', folder);
+  form.append('signature', signature);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!response.ok) throw new HttpError(502, 'Media upload failed.');
+  const json = await response.json();
+  return json.secure_url;
+}
 
 router.get('/', asyncHandler(async (req, res) => {
   const pool = getPostgresPool();
@@ -27,7 +59,7 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', authenticate, asyncHandler(async (req, res) => {
   const body = (req.body.body || '').toString().trim();
   const image = req.body.image ? req.body.image.toString() : null;
-  const video = req.body.video ? req.body.video.toString() : null;
+  const video = req.body.video ? await uploadToCloudinary(req.body.video.toString(), 'video') : null;
   const metadata = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
   const privacy = req.body.privacy ? req.body.privacy.toString() : 'Public';
   if (!body && !image && !video && Object.keys(metadata).length === 0) {
