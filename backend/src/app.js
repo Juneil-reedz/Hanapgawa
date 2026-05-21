@@ -34,7 +34,7 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json({ limit: '6mb' }));
+app.use(express.json({ limit: '100mb' }));
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 
 app.get('/', (_req, res) => {

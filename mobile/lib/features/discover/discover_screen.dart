@@ -950,24 +950,15 @@ class _StoryViewerState extends State<_StoryViewer> {
 
   Future<void> _playStoryMusic() async {
     final url = _story.metadata['musicUrl']?.toString();
-    if (url != null && url.isNotEmpty) {
-      await _player.setAudioContext(AudioContext(
-        android: AudioContextAndroid(
-          isSpeakerphoneOn: false,
-          stayAwake: false,
-          contentType: AndroidContentType.music,
-          usageType: AndroidUsageType.media,
-          audioFocus: AndroidAudioFocus.gain,
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.playback,
-          options: {AVAudioSessionOptions.defaultToSpeaker},
-        ),
-      ));
-      await _player.play(UrlSource(url));
-    } else {
-      await _player.stop();
+    if (url == null || url.isEmpty) {
+      _player.stop();
+      return;
     }
+    try {
+      await _player.stop();
+      await _player.setVolume(1.0);
+      await _player.play(UrlSource(url));
+    } catch (_) {}
   }
 
   @override
@@ -2090,7 +2081,7 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
   Future<void> _pickVideo() async {
     final file = await ImagePicker().pickVideo(
       source: ImageSource.gallery,
-      maxDuration: const Duration(minutes: 2),
+      maxDuration: const Duration(minutes: 1),
     );
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
