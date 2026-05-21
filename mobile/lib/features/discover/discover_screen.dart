@@ -442,6 +442,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         initialIndex: initialIndex,
       ),
     );
+    _loadStories();
   }
 
   @override
@@ -1159,6 +1160,10 @@ class _StoryViewerState extends State<_StoryViewer> {
 
   Future<void> _playStoryMusic() async {
     final requestId = ++_musicRequestId;
+    if (_story.video != null) {
+      await _player.stop();
+      return;
+    }
     var url = (_story.metadata['musicUrl'] ?? _story.metadata['previewUrl'])
         ?.toString();
     if (url == null || url.isEmpty) {
@@ -1291,6 +1296,45 @@ class _StoryViewerState extends State<_StoryViewer> {
     if (mounted) setState(() => _floatingReaction = null);
   }
 
+  Future<void> _deleteCurrentStory() async {
+    if (!_isOwner) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete story?'),
+        content: const Text('This will remove this story from My Day.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await widget.api.deleteStory(_story.id);
+      if (!mounted) return;
+      final group = List<StoryItem>.of(_stories)..removeAt(_index);
+      final groups = List<List<StoryItem>>.of(widget.storyGroups);
+      if (group.isEmpty) {
+        groups.removeAt(_groupIndex);
+      } else {
+        groups[_groupIndex] = group;
+      }
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e))),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final story = _story;
@@ -1416,6 +1460,24 @@ class _StoryViewerState extends State<_StoryViewer> {
                 Text('${_index + 1}/$total',
                     style:
                         const TextStyle(color: Colors.white70, fontSize: 12)),
+              if (_isOwner)
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_horiz, color: Colors.white),
+                  color: Colors.white,
+                  onSelected: (value) {
+                    if (value == 'delete') _deleteCurrentStory();
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(children: [
+                        Icon(Icons.delete_outline, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Delete story'),
+                      ]),
+                    ),
+                  ],
+                ),
             ]),
           ),
           if (_ownerTransition != null)

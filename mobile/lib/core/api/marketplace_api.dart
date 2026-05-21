@@ -801,6 +801,9 @@ class MarketplaceApi {
   Future<void> viewStory(String storyId) async =>
       _post('/stories/$storyId/view', {}, auth: true);
 
+  Future<void> deleteStory(String storyId) async =>
+      _deleteVoid('/stories/$storyId', auth: true);
+
   Future<List<Map<String, dynamic>>> getStoryViewers(String storyId) async {
     final json = await _get('/stories/$storyId/viewers', auth: true);
     return listOf(json['viewers'], (m) => m);

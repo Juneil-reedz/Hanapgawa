@@ -91,6 +91,17 @@ router.post('/:storyId/view', authenticate, asyncHandler(async (req, res) => {
   res.json({ viewed: true });
 }));
 
+router.delete('/:storyId', authenticate, asyncHandler(async (req, res) => {
+  const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'Database unavailable.');
+  const result = await pool.query(
+    `DELETE FROM stories WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [req.params.storyId, req.auth.sub],
+  );
+  if (!result.rows[0]) throw new HttpError(404, 'Story not found.');
+  res.json({ deleted: true });
+}));
+
 router.get('/:storyId/viewers', authenticate, asyncHandler(async (req, res) => {
   const pool = getPostgresPool();
   if (!pool) throw new HttpError(503, 'Database unavailable.');
