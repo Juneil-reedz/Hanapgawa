@@ -141,7 +141,7 @@ async function deleteJobPost(jobPostId) {
   return result.rowCount > 0;
 }
 
-async function listJobPosts({ userId, role, status }) {
+async function listJobPosts({ userId, role, status, followedIds = [] }) {
   const pool = requirePostgresRead();
   const values = [];
   const conditions = [];
@@ -149,6 +149,17 @@ async function listJobPosts({ userId, role, status }) {
   if (status) {
     values.push(status);
     conditions.push(`jp.status = $${values.length}`);
+  }
+
+  // Admins see everything; regular users only see their own posts and posts from people they follow
+  if (role !== 'admin') {
+    if (followedIds.length > 0) {
+      values.push([...followedIds, userId]);
+      conditions.push(`jp.client_user_id = ANY($${values.length})`);
+    } else {
+      values.push(userId);
+      conditions.push(`jp.client_user_id = $${values.length}`);
+    }
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

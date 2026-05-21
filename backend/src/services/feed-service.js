@@ -192,14 +192,14 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                  shared_snapshot AS "sharedSnapshot",
                  created_at AS "createdAt"
           FROM social_posts
-          WHERE (privacy = 'Public' OR user_id = $3)
+          WHERE (user_id = ANY($2) OR user_id = $3)
             AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-            AND (user_id = ANY($2) OR created_at > NOW() - INTERVAL '30 days')
           ORDER BY created_at DESC
           LIMIT $1
         `;
         params = [perSource + followedIds.length, followedIds, userId];
       } else {
+        // No follows yet — only show own posts
         socialQuery = `
           SELECT id, user_id AS "userId", full_name AS "fullName",
                  profile_pic AS "profilePic", body, image, video, metadata, privacy,
@@ -209,7 +209,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                  shared_snapshot AS "sharedSnapshot",
                  created_at AS "createdAt"
           FROM social_posts
-          WHERE (privacy = 'Public' OR user_id = $2)
+          WHERE user_id = $2
             AND (scheduled_at IS NULL OR scheduled_at <= NOW())
           ORDER BY created_at DESC
           LIMIT $1
@@ -239,8 +239,8 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
   try {
     const pool = getPool();
     if (pool) {
-      const result = await pool.query(
-        `SELECT jp.id,
+      const jobQuery = followedIds.length > 0
+        ? `SELECT jp.id,
                 jp.client_user_id AS "clientUserId",
                 u.full_name AS "clientFullName",
                 jp.post_type AS "postType",
@@ -249,13 +249,30 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                 jp.status,
                 (SELECT COUNT(*)::int FROM job_offers jo WHERE jo.job_post_id = jp.id) AS "offerCount",
                 jp.created_at AS "createdAt"
-         FROM job_posts jp
-         JOIN users u ON u.id = jp.client_user_id
-         WHERE jp.status = 'open'
-         ORDER BY jp.created_at DESC
-         LIMIT $1`,
-        [perSource],
-      );
+           FROM job_posts jp
+           JOIN users u ON u.id = jp.client_user_id
+           WHERE jp.status = 'open'
+             AND (jp.client_user_id = ANY($2) OR jp.client_user_id = $3)
+           ORDER BY jp.created_at DESC
+           LIMIT $1`
+        : `SELECT jp.id,
+                jp.client_user_id AS "clientUserId",
+                u.full_name AS "clientFullName",
+                jp.post_type AS "postType",
+                jp.title, jp.category, jp.municipality, jp.description,
+                jp.budget_min AS "budgetMin", jp.budget_max AS "budgetMax",
+                jp.status,
+                (SELECT COUNT(*)::int FROM job_offers jo WHERE jo.job_post_id = jp.id) AS "offerCount",
+                jp.created_at AS "createdAt"
+           FROM job_posts jp
+           JOIN users u ON u.id = jp.client_user_id
+           WHERE jp.status = 'open' AND jp.client_user_id = $2
+           ORDER BY jp.created_at DESC
+           LIMIT $1`;
+      const jobParams = followedIds.length > 0
+        ? [perSource, followedIds, userId]
+        : [perSource, userId];
+      const result = await pool.query(jobQuery, jobParams);
       for (const job of result.rows) {
         items.push({
           type: 'job',

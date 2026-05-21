@@ -24,7 +24,21 @@ async function postJob({ auth, ...payload }) {
 }
 
 async function getJobs({ auth, status }) {
-  return listJobPosts({ userId: auth.sub, role: auth.role, status });
+  const { getPostgresPool } = require('../db/postgres');
+  let followedIds = [];
+  if (auth.role !== 'admin') {
+    try {
+      const pool = getPostgresPool();
+      if (pool) {
+        const r = await pool.query(
+          'SELECT following_user_id FROM follows WHERE follower_user_id = $1',
+          [auth.sub],
+        );
+        followedIds = r.rows.map((row) => row.following_user_id);
+      }
+    } catch { /* ignore */ }
+  }
+  return listJobPosts({ userId: auth.sub, role: auth.role, status, followedIds });
 }
 
 async function getJobDetail({ jobPostId, auth }) {

@@ -5,11 +5,30 @@ const {
   getConversationNicknames, listConversationsForUser, listMessages, upsertConversationNickname,
 } = require('../repositories/conversation-repository');
 const { findUserById } = require('../repositories/user-repository');
+const { getPostgresPool } = require('../db/postgres');
+
+async function areMutualFollows(userA, userB) {
+  try {
+    const pool = getPostgresPool();
+    if (!pool) return false;
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM follows
+       WHERE (follower_user_id = $1 AND following_user_id = $2)
+          OR (follower_user_id = $2 AND following_user_id = $1)`,
+      [userA, userB],
+    );
+    return (r.rows[0]?.cnt ?? 0) >= 2;
+  } catch { return false; }
+}
 
 async function startConversation({ initiatorUserId, targetUserId, serviceListingId, bookingId, initialMessage }) {
   const target = await findUserById(targetUserId);
   if (!target) throw new HttpError(404, 'User not found.');
   if (initiatorUserId === targetUserId) throw new HttpError(400, 'Cannot message yourself.');
+
+  // Only allow messaging between mutual follows (friends)
+  const friends = await areMutualFollows(initiatorUserId, targetUserId);
+  if (!friends) throw new HttpError(403, 'You can only message people who follow you back.');
 
   // Reuse existing conversation between these two users instead of creating a duplicate
   const existing = await findConversationBetweenUsers(initiatorUserId, targetUserId);
