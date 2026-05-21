@@ -839,9 +839,11 @@ class _CircularStoryRow extends StatelessWidget {
             final groupIndex = index - 1;
             final group = groups[groupIndex];
             final isOwn = group.first.userId == myUserId;
+            final hasUnviewed = !isOwn && group.any((s) => !s.viewedByMe);
             return _StoryCircle(
                 group: group,
                 isOwn: isOwn,
+                hasUnviewed: hasUnviewed,
                 contentImage:
                     isOwn ? myStoryImage : _storyContentImage(group.first),
                 onTap: () => onOpen(groupIndex, 0));
@@ -946,12 +948,14 @@ class _StoryCircle extends StatelessWidget {
   const _StoryCircle({
     required this.group,
     required this.isOwn,
+    required this.hasUnviewed,
     required this.onTap,
     this.contentImage,
   });
 
   final List<StoryItem> group;
   final bool isOwn;
+  final bool hasUnviewed;
   final VoidCallback onTap;
   final String? contentImage;
 
@@ -969,10 +973,12 @@ class _StoryCircle extends StatelessWidget {
             Container(
               width: 58,
               height: 58,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [appPrimary, appSecondary],
+                  colors: hasUnviewed
+                      ? const [appPrimary, appSecondary]
+                      : const [appBorder, appMuted],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -982,14 +988,10 @@ class _StoryCircle extends StatelessWidget {
                 child: Container(
                   color: Colors.white,
                   child: ClipOval(
-                    child: contentImage != null
-                        ? _storyImage(contentImage!, story.fullName)
-                        : story.video != null
-                            ? const _StoryVideoThumb()
-                            : story.profilePic != null
-                                ? _storyProfilePic(
-                                    story.profilePic!, story.fullName)
-                                : _StoryInitial(story.fullName),
+                    child: _storyCirclePreview(
+                      fallbackImage: contentImage,
+                      fallbackStory: story,
+                    ),
                   ),
                 ),
               ),
@@ -1013,6 +1015,17 @@ String? _storyContentImage(StoryItem story) {
   final gif = story.metadata['gif']?.toString();
   if (gif != null && gif.isNotEmpty) return gif;
   return null;
+}
+
+Widget _storyCirclePreview({
+  required String? fallbackImage,
+  required StoryItem fallbackStory,
+}) {
+  if (fallbackImage != null) {
+    return _storyImage(fallbackImage, fallbackStory.fullName);
+  }
+  if (fallbackStory.video != null) return const _StoryVideoThumb();
+  return _StoryInitial(fallbackStory.fullName);
 }
 
 bool _isRemoteUrl(String value) =>
@@ -1123,6 +1136,7 @@ class _StoryViewerState extends State<_StoryViewer> {
   String? _ownerTransition;
   final _player = AudioPlayer();
   VideoPlayerController? _videoController;
+  StreamSubscription<void>? _musicCompleteSub;
   var _musicRequestId = 0;
 
   List<StoryItem> get _stories => widget.storyGroups[_groupIndex];
@@ -1138,6 +1152,9 @@ class _StoryViewerState extends State<_StoryViewer> {
     );
     _index = widget.initialIndex.clamp(0, _stories.length - 1);
     _configureStoryAudio();
+    _musicCompleteSub = _player.onPlayerComplete.listen((_) {
+      if (mounted && _storyHasMusic) _playStoryMusic(refresh: true);
+    });
     _markViewed();
     if (_isOwner) _loadViewers();
     _playStoryMusic();
@@ -1158,37 +1175,81 @@ class _StoryViewerState extends State<_StoryViewer> {
     ));
   }
 
-  Future<void> _playStoryMusic() async {
+  Future<void> _playStoryMusic({bool refresh = false}) async {
     final requestId = ++_musicRequestId;
-    if (_story.video != null) {
-      await _player.stop();
-      return;
+    final savedUrls = _storySavedMusicUrls
+        .where((url) => url.startsWith('http'))
+        .toSet()
+        .toList();
+    if (!refresh && savedUrls.isNotEmpty) {
+      final played = await _tryPlayStoryMusicUrls(savedUrls, requestId);
+      if (played) return;
     }
-    var url = (_story.metadata['musicUrl'] ?? _story.metadata['previewUrl'])
-        ?.toString();
-    if (url == null || url.isEmpty) {
-      final music = _story.metadata['music']?.toString();
-      if (music != null && music.isNotEmpty) {
-        try {
-          final tracks = await widget.api.searchMusic(music);
-          if (requestId != _musicRequestId) return;
-          url = tracks
-              .map((track) => track['previewUrl']?.toString() ?? '')
-              .firstWhere((preview) => preview.isNotEmpty, orElse: () => '');
-        } catch (_) {}
-      }
-    }
-    if (url == null || url.isEmpty) {
+
+    final searchedUrls = await _searchStoryMusicUrls(requestId);
+    final urls = <String>[
+      ...searchedUrls,
+      if (refresh) ...savedUrls,
+    ].where((url) => url.startsWith('http')).toSet().toList();
+    if (urls.isEmpty) {
       _player.stop();
       return;
     }
+
+    final played = await _tryPlayStoryMusicUrls(urls, requestId);
+    if (!played) await _player.stop();
+  }
+
+  Future<bool> _tryPlayStoryMusicUrls(List<String> urls, int requestId) async {
+    await _configureStoryAudio();
+    await _player.setVolume(1.0);
+    await _player.setReleaseMode(ReleaseMode.loop);
+    for (final url in urls) {
+      if (requestId != _musicRequestId) return false;
+      try {
+        await _player.stop();
+        await _player.play(UrlSource(url));
+        return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  List<String> get _storySavedMusicUrls {
+    final values = [
+      _story.metadata['musicUrl'],
+      _story.metadata['previewUrl'],
+      _story.metadata['audioUrl'],
+    ];
+    return values
+        .map((value) => value?.toString().trim() ?? '')
+        .where((url) => url.isNotEmpty)
+        .toList();
+  }
+
+  Future<List<String>> _searchStoryMusicUrls(int requestId) async {
+    final music = _story.metadata['music']?.toString();
+    if (music == null || music.isEmpty) return const [];
     try {
-      await _configureStoryAudio();
-      await _player.stop();
-      await _player.setVolume(1.0);
-      await _player.setReleaseMode(ReleaseMode.loop);
-      await _player.play(UrlSource(url));
-    } catch (_) {}
+      final tracks = await widget.api.searchMusic(music);
+      if (requestId != _musicRequestId) return const [];
+      return tracks
+          .map((track) => track['previewUrl']?.toString().trim() ?? '')
+          .where((preview) => preview.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  bool get _storyHasMusic {
+    final musicUrl =
+        (_story.metadata['musicUrl'] ?? _story.metadata['previewUrl'])
+            ?.toString();
+    final music = _story.metadata['music']?.toString();
+    return (musicUrl != null && musicUrl.isNotEmpty) ||
+        _storySavedMusicUrls.isNotEmpty ||
+        (music != null && music.isNotEmpty);
   }
 
   Future<void> _initStoryVideo() async {
@@ -1199,15 +1260,26 @@ class _StoryViewerState extends State<_StoryViewer> {
     final url = _story.video;
     if (url == null || url.isEmpty) return;
     try {
-      final ctrl = VideoPlayerController.networkUrl(
-        Uri.parse(_storyCloudinaryMp4(url)),
+      final transformed = _storyCloudinaryMp4(url);
+      var ctrl = VideoPlayerController.networkUrl(
+        Uri.parse(url),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
-      await ctrl.initialize();
+      try {
+        await ctrl.initialize();
+      } catch (_) {
+        if (transformed == url) rethrow;
+        await ctrl.dispose();
+        ctrl = VideoPlayerController.networkUrl(
+          Uri.parse(transformed),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        await ctrl.initialize();
+      }
       if (mounted) {
         setState(() => _videoController = ctrl);
         ctrl.setLooping(true);
-        ctrl.setVolume(1.0);
+        ctrl.setVolume(_storyHasMusic ? 0.0 : 1.0);
         ctrl.play();
       } else {
         ctrl.dispose();
@@ -1218,6 +1290,7 @@ class _StoryViewerState extends State<_StoryViewer> {
   @override
   void dispose() {
     _videoController?.dispose();
+    _musicCompleteSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -1941,7 +2014,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   Future<void> _pickVideo() async {
     final file = await ImagePicker().pickVideo(
       source: ImageSource.gallery,
-      maxDuration: const Duration(seconds: 60),
+      maxDuration: const Duration(hours: 1),
     );
     if (file == null || !mounted) return;
     setState(() {
@@ -1967,7 +2040,10 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (!mounted) return;
       setState(() {
         _posting = false;
-        _error = 'Video compression failed. Try a shorter video.';
+        _videoPath = file.path;
+        _imageBytes = null;
+        _gif = null;
+        _error = null;
       });
     }
   }
@@ -2066,6 +2142,8 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (_location != null) 'location': _location,
       if (_music != null) 'music': _music,
       if (_musicUrl != null) 'musicUrl': _musicUrl,
+      if (_musicUrl != null) 'previewUrl': _musicUrl,
+      if (_musicUrl != null) 'audioUrl': _musicUrl,
       'backgroundColor': _backgroundColor.value,
     };
     if (!SyncService.instance.isOnline) {
@@ -2607,30 +2685,13 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
     if (_mediaDrafts.length >= _maxMedia) return;
     final file = await ImagePicker().pickVideo(
       source: ImageSource.gallery,
-      maxDuration: const Duration(seconds: 60),
+      maxDuration: const Duration(hours: 1),
     );
     if (file == null || !mounted) return;
-    setState(() => _posting = true);
-    try {
-      final info = await VideoCompress.compressVideo(
-        file.path,
-        quality: VideoQuality.LowQuality,
-        deleteOrigin: false,
-        includeAudio: true,
-      );
-      final path = info?.file?.path ?? file.path;
-      if (mounted)
-        setState(() {
-          _posting = false;
-          _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: path));
-        });
-    } catch (_) {
-      if (mounted)
-        setState(() {
-          _posting = false;
-          _error = 'Video compression failed. Try a shorter video.';
-        });
-    }
+    setState(() {
+      _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: file.path));
+      _error = null;
+    });
   }
 
   Future<void> _addMoreMedia() async {
@@ -2889,13 +2950,27 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
       return;
     }
 
+    final metadata = _metadata();
+    final drafts = List<_MediaDraft>.of(_mediaDrafts);
+    final privacy = _privacy;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() {
       _posting = true;
       _error = null;
     });
+    Navigator.pop(context);
+    messenger.showSnackBar(const SnackBar(
+      duration: Duration(minutes: 5),
+      content: Row(children: [
+        SizedBox.square(
+          dimension: 16,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        ),
+        SizedBox(width: 10),
+        Text('Uploading post...'),
+      ]),
+    ));
 
-    final metadata = _metadata();
-    final drafts = List<_MediaDraft>.of(_mediaDrafts);
     try {
       String? firstImage;
       String? firstVideo;
@@ -2903,8 +2978,11 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
 
       for (final draft in drafts) {
         final type = draft.isVideo ? 'video' : 'image';
-        final url = draft.isVideo && draft.filePath != null
-            ? await widget.api.uploadFileToCloudinary(draft.filePath!, type)
+        final videoPath = draft.isVideo && draft.filePath != null
+            ? await _prepareVideoForUpload(draft.filePath!)
+            : null;
+        final url = draft.isVideo && videoPath != null
+            ? await widget.api.uploadFileToCloudinary(videoPath, type)
             : await widget.api
                 .uploadToCloudinary(base64Encode(draft.bytes!), type);
         if (url.isEmpty) throw Exception('$type upload failed.');
@@ -2919,11 +2997,10 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
           'body': text,
           if (firstImage != null) 'image': firstImage,
           if (firstVideo != null) 'video': firstVideo,
-          'privacy': _privacy,
+          'privacy': privacy,
           'metadata': metadata,
         });
-        if (!mounted) return;
-        Navigator.pop(context);
+        messenger.hideCurrentSnackBar();
         widget.onPosted(queued: true);
         return;
       }
@@ -2933,18 +3010,31 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
         image: firstImage,
         video: firstVideo,
         metadata: metadata,
-        privacy: _privacy,
+        privacy: privacy,
       );
-      if (!mounted) return;
-      Navigator.pop(context);
-      widget.onPosted();
+      messenger.hideCurrentSnackBar();
       widget.onPublished?.call();
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _posting = false;
-        _error = friendlyError(e);
-      });
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        content: Text(friendlyError(e)),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 4),
+      ));
+    }
+  }
+
+  Future<String> _prepareVideoForUpload(String path) async {
+    try {
+      final info = await VideoCompress.compressVideo(
+        path,
+        quality: VideoQuality.LowQuality,
+        deleteOrigin: false,
+        includeAudio: true,
+      );
+      return info?.file?.path ?? path;
+    } catch (_) {
+      return path;
     }
   }
 

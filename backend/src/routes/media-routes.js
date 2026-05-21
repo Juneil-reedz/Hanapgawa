@@ -12,6 +12,33 @@ const router = express.Router();
 let spotifyToken = null;
 let spotifyTokenExpiresAt = 0;
 
+const DEFAULT_LOCATIONS = [
+  'Bongao, Tawi-Tawi, Philippines',
+  'Panglima Sugala, Tawi-Tawi, Philippines',
+  'Sapa-Sapa, Tawi-Tawi, Philippines',
+  'Languyan, Tawi-Tawi, Philippines',
+  'Tandubas, Tawi-Tawi, Philippines',
+  'Simunul, Tawi-Tawi, Philippines',
+  'Sitangkai, Tawi-Tawi, Philippines',
+  'South Ubian, Tawi-Tawi, Philippines',
+  'Turtle Islands, Tawi-Tawi, Philippines',
+  'Mapun, Tawi-Tawi, Philippines',
+  'Sibutu, Tawi-Tawi, Philippines',
+].map((displayName, index) => ({
+  id: `local-${index}`,
+  name: displayName.split(',')[0],
+  displayName,
+  latitude: null,
+  longitude: null,
+}));
+
+function localLocations(query) {
+  const q = query.toLowerCase();
+  return DEFAULT_LOCATIONS.filter((location) =>
+    !q || location.displayName.toLowerCase().includes(q) || location.name.toLowerCase().includes(q),
+  );
+}
+
 async function getSpotifyToken() {
   if (!env.spotifyClientId || !env.spotifyClientSecret) {
     throw new HttpError(503, 'Spotify search is not configured.');
@@ -84,30 +111,34 @@ router.get('/stickers/search', asyncHandler(async (req, res) => {
 
 router.get('/locations/search', asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
-  if (!q) return res.json({ locations: [] });
+  if (!q) return res.json({ locations: localLocations('') });
 
   const url = new URL('https://nominatim.openstreetmap.org/search');
-  url.searchParams.set('q', q);
+  url.searchParams.set('q', `${q}, Philippines`);
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('limit', Math.min(parseInt(req.query.limit) || 8, 10).toString());
   url.searchParams.set('addressdetails', '1');
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'HanapGawa/1.0 (local-development)',
-      'Accept-Language': 'en',
-    },
-  });
-  if (!response.ok) throw new HttpError(502, 'Location provider is unavailable.');
-  const data = await response.json();
-  const locations = data.map((place) => ({
-    id: place.place_id?.toString() || place.osm_id?.toString() || place.display_name,
-    name: place.name || place.display_name,
-    displayName: place.display_name,
-    latitude: place.lat,
-    longitude: place.lon,
-  }));
-  res.json({ locations });
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'HanapGawa/1.0 (support@hanapgawa.app)',
+        'Accept-Language': 'en',
+      },
+    });
+    if (!response.ok) throw new Error('Location provider unavailable');
+    const data = await response.json();
+    const locations = data.map((place) => ({
+      id: place.place_id?.toString() || place.osm_id?.toString() || place.display_name,
+      name: place.name || place.display_name,
+      displayName: place.display_name,
+      latitude: place.lat,
+      longitude: place.lon,
+    }));
+    res.json({ locations: locations.length ? locations : localLocations(q) });
+  } catch {
+    res.json({ locations: localLocations(q) });
+  }
 }));
 
 // Returns a signed Cloudinary upload params so Flutter can upload directly

@@ -11,6 +11,7 @@ import '../../core/local/sync_service.dart';
 import '../../core/models/models.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
+import '../../core/video_controller_cache.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/feed_header.dart';
 import '../../shared/widgets/info_pill.dart';
@@ -1357,73 +1358,42 @@ class _PostMediaGrid extends StatelessWidget {
         child: _cell(items[0]),
       );
     }
-    if (count == 2) {
-      return SizedBox(
-        height: 220,
-        child: Row(children: [
-          Expanded(child: _cell(items[0])),
-          const SizedBox(width: 3),
-          Expanded(child: _cell(items[1])),
-        ]),
-      );
-    }
-    if (count == 3) {
-      return SizedBox(
-        height: 220,
-        child: Row(children: [
-          Expanded(flex: 3, child: _cell(items[0])),
-          const SizedBox(width: 3),
-          Expanded(
-            flex: 2,
-            child: Column(children: [
-              Expanded(child: _cell(items[1])),
-              const SizedBox(height: 3),
-              Expanded(child: _cell(items[2])),
-            ]),
-          ),
-        ]),
-      );
-    }
-    final show = items.take(4).toList();
-    final extra = count - 4;
-    final rows = (show.length / 2).ceil();
-    return Column(
-      children: List.generate(rows, (r) {
-        final a = r * 2;
-        final b = a + 1;
-        final isLastRow = r == rows - 1;
-        return Padding(
-          padding: EdgeInsets.only(top: r > 0 ? 3 : 0),
-          child: SizedBox(
-            height: 160,
-            child: Row(children: [
-              Expanded(child: _cell(show[a])),
-              const SizedBox(width: 3),
-              Expanded(
-                child: b < show.length
-                    ? (isLastRow && extra > 0
-                        ? Stack(fit: StackFit.expand, children: [
-                            _cell(show[b]),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                color: Colors.black54,
-                                alignment: Alignment.center,
-                                child: Text('+$extra',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 28,
-                                        fontWeight: FontWeight.w900)),
-                              ),
-                            ),
-                          ])
-                        : _cell(show[b]))
-                    : const SizedBox(),
+
+    return SizedBox(
+      height: 360,
+      child: PageView.builder(
+        controller: PageController(viewportFraction: 0.92),
+        itemCount: count,
+        itemBuilder: (context, index) => Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _cell(items[index]),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${index + 1}/$count',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
               ),
-            ]),
+            ],
           ),
-        );
-      }),
+        ),
+      ),
     );
   }
 }
@@ -1437,51 +1407,36 @@ class _InlineVideoPlayer extends StatefulWidget {
 }
 
 class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  static VideoPlayerController? _activeVideoController;
+
   VideoPlayerController? _controller;
+  VoidCallback? _playbackListener;
+  ScrollPosition? _scrollPosition;
+  VoidCallback? _scrollListener;
   bool _initialized = false;
   bool _error = false;
+  bool _muted = false;
 
   @override
   void initState() {
     super.initState();
+    final cached = VideoControllerCache.peek(widget.video);
+    if (cached?.isReady == true) {
+      _controller = cached!.controller;
+      _initialized = true;
+      cached.touch();
+      _attachPlaybackMonitor(cached.controller);
+    }
     _init();
   }
 
   Future<void> _init() async {
     try {
-      VideoPlayerController ctrl;
       final v = widget.video;
-      if (v.startsWith('http://') || v.startsWith('https://')) {
-        final transformed = _toCloudinaryMp4(v);
-        ctrl = VideoPlayerController.networkUrl(
-          Uri.parse(transformed),
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
-        try {
-          await ctrl.initialize();
-        } catch (_) {
-          if (transformed != v) {
-            await ctrl.dispose();
-            ctrl = VideoPlayerController.networkUrl(
-              Uri.parse(v),
-              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-            );
-            await ctrl.initialize();
-          } else {
-            rethrow;
-          }
-        }
-      } else {
-        final payload = v.contains(',') ? v.split(',').last : v;
-        final bytes = base64Decode(payload);
-        final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/detail_video_${widget.hashCode}.mp4');
-        await file.writeAsBytes(bytes);
-        ctrl = VideoPlayerController.file(file,
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
-        await ctrl.initialize();
-      }
+      final ctrl = await _controllerFor(v);
+      if (identical(_controller, ctrl) && _initialized) return;
       if (mounted) {
+        _attachPlaybackMonitor(ctrl);
         setState(() {
           _controller = ctrl;
           _initialized = true;
@@ -1495,8 +1450,114 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
   @override
   void dispose() {
-    _controller?.dispose();
+    final listener = _playbackListener;
+    if (listener != null) {
+      _controller?.removeListener(listener);
+    }
+    final scrollListener = _scrollListener;
+    final scrollPosition = _scrollPosition;
+    if (scrollListener != null && scrollPosition != null) {
+      scrollPosition.removeListener(scrollListener);
+    }
+    if (identical(_activeVideoController, _controller)) {
+      _activeVideoController = null;
+    }
+    _controller?.pause();
     super.dispose();
+  }
+
+  void _attachPlaybackMonitor(VideoPlayerController ctrl) {
+    final oldListener = _playbackListener;
+    if (oldListener != null) {
+      _controller?.removeListener(oldListener);
+    }
+    _playbackListener = () {
+      if (ctrl.value.isPlaying) _attachScrollMonitor();
+    };
+    ctrl.addListener(_playbackListener!);
+  }
+
+  void _attachScrollMonitor() {
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position == null || identical(position, _scrollPosition)) return;
+
+    final oldListener = _scrollListener;
+    final oldPosition = _scrollPosition;
+    if (oldListener != null && oldPosition != null) {
+      oldPosition.removeListener(oldListener);
+    }
+
+    _scrollPosition = position;
+    _scrollListener = () => _pauseIfOffscreen();
+    position.addListener(_scrollListener!);
+  }
+
+  void _pauseIfOffscreen() {
+    final ctrl = _controller;
+    if (!mounted || ctrl == null || !ctrl.value.isPlaying) return;
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final bottom = topLeft.dy + renderObject.size.height;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final visibleTop = topLeft.dy.clamp(0.0, screenHeight);
+    final visibleBottom = bottom.clamp(0.0, screenHeight);
+    final visibleHeight = visibleBottom - visibleTop;
+
+    if (visibleHeight <= renderObject.size.height * 0.1) {
+      ctrl.pause();
+    }
+  }
+
+  Future<void> _toggleMute() async {
+    final ctrl = _controller;
+    if (ctrl == null) return;
+    final nextMuted = !_muted;
+    await ctrl.setVolume(nextMuted ? 0 : 1);
+    if (mounted) setState(() => _muted = nextMuted);
+  }
+
+  Future<VideoPlayerController> _controllerFor(String source) async {
+    return VideoControllerCache.get(source, () => _createController(source));
+  }
+
+  Future<VideoPlayerController> _createController(String source) async {
+    VideoPlayerController ctrl;
+    if (source.startsWith('http://') || source.startsWith('https://')) {
+      final transformed = _toCloudinaryMp4(source);
+      ctrl = VideoPlayerController.networkUrl(
+        Uri.parse(source),
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      try {
+        await ctrl.initialize();
+      } catch (_) {
+        if (transformed != source) {
+          await ctrl.dispose();
+          ctrl = VideoPlayerController.networkUrl(
+            Uri.parse(transformed),
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+          );
+          await ctrl.initialize();
+        } else {
+          rethrow;
+        }
+      }
+    } else {
+      final payload = source.contains(',') ? source.split(',').last : source;
+      final bytes = base64Decode(payload);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/detail_video_${source.hashCode}.mp4');
+      if (!await file.exists()) {
+        await file.writeAsBytes(bytes);
+      }
+      ctrl = VideoPlayerController.file(file,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
+      await ctrl.initialize();
+    }
+    return ctrl;
   }
 
   @override
@@ -1529,7 +1590,18 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
         ValueListenableBuilder<VideoPlayerValue>(
           valueListenable: ctrl,
           builder: (_, value, __) => GestureDetector(
-            onTap: () => value.isPlaying ? ctrl.pause() : ctrl.play(),
+            onTap: () {
+              if (value.isPlaying) {
+                ctrl.pause();
+              } else {
+                final active = _activeVideoController;
+                if (active != null && !identical(active, ctrl)) {
+                  active.pause();
+                }
+                _activeVideoController = ctrl;
+                ctrl.play();
+              }
+            },
             child: Container(
               color: Colors.transparent,
               child: value.isPlaying
@@ -1541,6 +1613,23 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                       child: const Icon(Icons.play_arrow,
                           color: Colors.white, size: 40),
                     ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: Material(
+            color: Colors.black54,
+            shape: const CircleBorder(),
+            child: IconButton(
+              icon: Icon(
+                _muted ? Icons.volume_off : Icons.volume_up,
+                color: Colors.white,
+                size: 20,
+              ),
+              visualDensity: VisualDensity.compact,
+              onPressed: _toggleMute,
             ),
           ),
         ),

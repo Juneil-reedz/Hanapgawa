@@ -28,6 +28,7 @@ class ShellScreen extends StatefulWidget {
 
 class _ShellScreenState extends State<ShellScreen> {
   var _index = 0;
+  var _discoverRefreshKey = 0;
 
   // Draggable FAB position (initialized in build once we have screen size)
   double? _fabX;
@@ -128,6 +129,7 @@ class _ShellScreenState extends State<ShellScreen> {
   }
 
   void _onDestinationSelected(int value) {
+    if (value == 0) _discoverRefreshKey++;
     setState(() => _index = value);
     if (_isAdmin) return;
 
@@ -191,7 +193,10 @@ class _ShellScreenState extends State<ShellScreen> {
         ? [
             DashboardScreen(api: widget.api, onLogout: widget.onLogout),
             DiscoverScreen(
-                api: widget.api, onLogout: widget.onLogout, readOnly: true),
+                api: widget.api,
+                onLogout: widget.onLogout,
+                readOnly: true,
+                refreshKey: _discoverRefreshKey),
             JobsScreen(api: widget.api, readOnly: true),
             ProfileScreen(
                 api: widget.api,
@@ -199,7 +204,10 @@ class _ShellScreenState extends State<ShellScreen> {
                 onLogout: widget.onLogout),
           ]
         : [
-            DiscoverScreen(api: widget.api, onLogout: widget.onLogout),
+            DiscoverScreen(
+                api: widget.api,
+                onLogout: widget.onLogout,
+                refreshKey: _discoverRefreshKey),
             BookingsScreen(
                 api: widget.api,
                 openJobs: () => setState(() => _index = _kJobs),

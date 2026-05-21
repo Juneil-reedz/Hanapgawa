@@ -5,7 +5,7 @@ import '../../core/theme.dart';
 import '../../core/utils.dart';
 import 'review_sheet.dart';
 
-class BookingCard extends StatelessWidget {
+class BookingCard extends StatefulWidget {
   const BookingCard({
     super.key,
     required this.booking,
@@ -27,6 +27,24 @@ class BookingCard extends StatelessWidget {
   final VoidCallback? onReschedule;
   final VoidCallback? onTap;
   final VoidCallback? onDelete;
+
+  @override
+  State<BookingCard> createState() => _BookingCardState();
+}
+
+class _BookingCardState extends State<BookingCard> {
+  var _rated = false;
+
+  Booking get booking => widget.booking;
+  String get myId => widget.myId;
+
+  MarketplaceApi? get api => widget.api;
+  Future<void> Function(String) get onStatus => widget.onStatus;
+  VoidCallback get onMessage => widget.onMessage;
+  VoidCallback? get onRepost => widget.onRepost;
+  VoidCallback? get onReschedule => widget.onReschedule;
+  VoidCallback? get onTap => widget.onTap;
+  VoidCallback? get onDelete => widget.onDelete;
 
   bool get _isClient => booking.clientUserId == myId;
   bool get _isWorker => booking.workerUserId == myId;
@@ -428,34 +446,48 @@ class BookingCard extends StatelessWidget {
                 // Mutual rating — both parties can rate each other
                 if (booking.status == 'completed' && api != null) ...[
                   const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      final reviewedName = _isClient
-                          ? (booking.workerName ?? 'Worker')
-                          : (booking.clientName ?? 'Client');
-                      showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        shape: const RoundedRectangleBorder(
-                            borderRadius: BorderRadius.vertical(
-                                top: Radius.circular(20))),
-                        builder: (context) => ReviewSheet(
-                          api: api!,
-                          booking: booking,
-                          reviewedName: reviewedName,
+                  _rated
+                      ? OutlinedButton.icon(
+                          onPressed: null,
+                          icon: const Icon(Icons.star, size: 16, color: Colors.amber),
+                          label: const Text('Rated'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            foregroundColor: Colors.amber,
+                            side: const BorderSide(color: Colors.amber),
+                          ),
+                        )
+                      : OutlinedButton.icon(
+                          onPressed: () {
+                            final reviewedName = _isClient
+                                ? (booking.workerName ?? 'Worker')
+                                : (booking.clientName ?? 'Client');
+                            showModalBottomSheet<void>(
+                              context: context,
+                              isScrollControlled: true,
+                              shape: const RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(20))),
+                              builder: (context) => ReviewSheet(
+                                api: api!,
+                                booking: booking,
+                                reviewedName: reviewedName,
+                                onDone: () => setState(() => _rated = true),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.star_outline, size: 16),
+                          label: Text(_isClient ? 'Rate Worker' : 'Rate Client'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
                         ),
-                      );
-                    },
-                    icon: const Icon(Icons.star_outline, size: 16),
-                    label: Text(
-                        _isClient ? 'Rate Worker' : 'Rate Client'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
                 ],
               ],
             ),

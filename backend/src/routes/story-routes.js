@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 const { asyncHandler } = require('../lib/async-handler');
 const { HttpError } = require('../lib/http-error');
@@ -8,6 +9,16 @@ const { getPostgresPool } = require('../db/postgres');
 const { env } = require('../config/env');
 
 const router = express.Router();
+
+function optionalAuth(req) {
+  try {
+    const header = req.headers.authorization;
+    if (header && header.startsWith('Bearer ')) {
+      return jwt.verify(header.slice(7), env.jwtSecret).sub;
+    }
+  } catch { /* invalid token - treat as unauthenticated */ }
+  return null;
+}
 
 async function uploadToCloudinary(file, resourceType) {
   if (!file || file.startsWith('http://') || file.startsWith('https://')) return file;
@@ -42,16 +53,24 @@ async function uploadToCloudinary(file, resourceType) {
 router.get('/', asyncHandler(async (req, res) => {
   const pool = getPostgresPool();
   if (!pool) return res.json({ stories: [] });
+  const viewerId = optionalAuth(req);
   const result = await pool.query(
     `SELECT s.id, s.user_id AS "userId", s.full_name AS "fullName",
             COALESCE(up.profile_pic, s.profile_pic) AS "profilePic",
             s.body, s.image, s.video, s.metadata, s.privacy,
-            s.expires_at AS "expiresAt", s.created_at AS "createdAt"
+            s.expires_at AS "expiresAt", s.created_at AS "createdAt",
+            CASE
+              WHEN s.user_id = $1 THEN TRUE
+              WHEN sv.user_id IS NOT NULL THEN TRUE
+              ELSE FALSE
+            END AS "viewedByMe"
      FROM stories s
      LEFT JOIN user_profiles up ON up.user_id = s.user_id
+     LEFT JOIN story_views sv ON sv.story_id = s.id AND sv.user_id = $1
      WHERE s.expires_at > NOW() AND s.privacy = 'Public'
      ORDER BY s.created_at DESC
      LIMIT 50`,
+    [viewerId],
   );
   res.json({ stories: result.rows });
 }));
@@ -94,12 +113,26 @@ router.post('/:storyId/view', authenticate, asyncHandler(async (req, res) => {
 router.delete('/:storyId', authenticate, asyncHandler(async (req, res) => {
   const pool = getPostgresPool();
   if (!pool) throw new HttpError(503, 'Database unavailable.');
-  const result = await pool.query(
-    `DELETE FROM stories WHERE id = $1 AND user_id = $2 RETURNING id`,
-    [req.params.storyId, req.auth.sub],
-  );
-  if (!result.rows[0]) throw new HttpError(404, 'Story not found.');
-  res.json({ deleted: true });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const story = await client.query(
+      `SELECT id FROM stories WHERE id = $1 AND user_id = $2`,
+      [req.params.storyId, req.auth.sub],
+    );
+    if (!story.rows[0]) throw new HttpError(404, 'Story not found.');
+
+    await client.query(`DELETE FROM story_reactions WHERE story_id = $1`, [req.params.storyId]);
+    await client.query(`DELETE FROM story_views WHERE story_id = $1`, [req.params.storyId]);
+    await client.query(`DELETE FROM stories WHERE id = $1`, [req.params.storyId]);
+    await client.query('COMMIT');
+    res.json({ deleted: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 router.get('/:storyId/viewers', authenticate, asyncHandler(async (req, res) => {

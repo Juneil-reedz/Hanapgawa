@@ -687,10 +687,6 @@ class MarketplaceApi {
   /// rather than loading all bytes into memory.
   Future<String> uploadFileToCloudinary(
       String filePath, String resourceType) async {
-    if (resourceType == 'video') {
-      // Avoid long direct Cloudinary waits on mobile; backend will upload this.
-      return _fileDataUri(filePath, resourceType);
-    }
     try {
       final sig = await _get('/media/cloudinary-signature', auth: true);
       final cloudName = sig['cloudName'] as String;
@@ -715,18 +711,45 @@ class MarketplaceApi {
       );
       request.files.add(multiFile);
 
-      final streamed =
-          await request.send().timeout(const Duration(seconds: 45));
+      final streamed = await request
+          .send()
+          .timeout(Duration(minutes: resourceType == 'video' ? 15 : 1));
       final body = await streamed.stream.bytesToString();
       if (streamed.statusCode >= 400) {
+        if (resourceType == 'video') {
+          final message = _cloudinaryError(body) ??
+              'Video upload failed. Please try again.';
+          throw Exception(message);
+        }
         return _fileDataUri(filePath, resourceType);
       }
       final json = jsonDecode(body) as Map<String, dynamic>;
-      return json['secure_url'] as String? ??
-          await _fileDataUri(filePath, resourceType);
-    } catch (_) {
+      final url = json['secure_url'] as String?;
+      if (url != null && url.isNotEmpty) return url;
+      if (resourceType == 'video') {
+        throw Exception('Video upload failed. Please try again.');
+      }
+      return _fileDataUri(filePath, resourceType);
+    } catch (error) {
+      if (resourceType == 'video') {
+        final message = error.toString().replaceFirst('Exception: ', '');
+        throw Exception(message.isEmpty
+            ? 'Video upload failed. Please try again.'
+            : message);
+      }
       return _fileDataUri(filePath, resourceType);
     }
+  }
+
+  String? _cloudinaryError(String body) {
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final error = json['error'];
+      if (error is Map && error['message'] != null) {
+        return error['message'].toString();
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<String> _fileDataUri(String filePath, String resourceType) async {
@@ -774,7 +797,7 @@ class MarketplaceApi {
   }
 
   Future<List<StoryItem>> getStories() async {
-    final json = await _get('/stories');
+    final json = await _get('/stories', auth: token.isNotEmpty);
     return listOf(json['stories'], StoryItem.fromJson);
   }
 

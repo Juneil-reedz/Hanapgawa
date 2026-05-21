@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../utils.dart';
 
 class AuthResponse {
@@ -737,7 +739,8 @@ class Booking {
         'rescheduledAt': rescheduledAt?.toIso8601String(),
         'status': status,
         'repostedJobId': repostedJobId,
-        if (cancellationReason != null) 'cancellationReason': cancellationReason,
+        if (cancellationReason != null)
+          'cancellationReason': cancellationReason,
         'fromOffer': fromOffer,
         'source': source,
         'createdAt': createdAt.toIso8601String(),
@@ -896,6 +899,7 @@ class StoryItem {
     this.video,
     this.metadata = const {},
     this.privacy = 'Public',
+    this.viewedByMe = false,
   });
   final String id;
   final String userId;
@@ -908,6 +912,7 @@ class StoryItem {
   final String? video;
   final Map<String, dynamic> metadata;
   final String privacy;
+  final bool viewedByMe;
 
   factory StoryItem.fromJson(Map<String, dynamic> json) => StoryItem(
         id: json['id']?.toString() ?? '',
@@ -921,9 +926,21 @@ class StoryItem {
         video: json['video']?.toString(),
         metadata: json['metadata'] is Map
             ? Map<String, dynamic>.from(json['metadata'] as Map)
-            : const {},
+            : json['metadata'] is String
+                ? _parseMetadataString(json['metadata'] as String)
+                : const {},
         privacy: json['privacy']?.toString() ?? 'Public',
+        viewedByMe: json['viewedByMe'] == true,
       );
+}
+
+Map<String, dynamic> _parseMetadataString(String s) {
+  try {
+    final decoded = jsonDecode(s);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : const {};
+  } catch (_) {
+    return const {};
+  }
 }
 
 class ReportItem {
@@ -1209,7 +1226,8 @@ class BookingPayload {
         'municipality': municipality,
         'locationDetails': locationDetails,
         'notes': notes,
-        if (scheduledAt != null) 'scheduledAt': scheduledAt!.toUtc().toIso8601String(),
+        if (scheduledAt != null)
+          'scheduledAt': scheduledAt!.toUtc().toIso8601String(),
       };
 }
 

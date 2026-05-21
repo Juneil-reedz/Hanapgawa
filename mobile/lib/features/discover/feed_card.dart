@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -11,6 +12,7 @@ import '../../core/local/sync_service.dart';
 import '../../core/models/models.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
+import '../../core/video_controller_cache.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/feed_header.dart';
 import '../../shared/widgets/report_sheet.dart';
@@ -36,10 +38,18 @@ class FeedCard extends StatefulWidget {
 }
 
 class _FeedCardState extends State<FeedCard> {
+  static _FeedCardState? _activeMusicCard;
+
   late bool _liked;
   late int _likeCount;
+  AudioPlayer? _musicPlayer;
+  List<String>? _searchedMusicUrls;
+  ScrollPosition? _scrollPosition;
+  VoidCallback? _scrollListener;
   var _deleting = false;
   var _isSaved = false;
+  var _musicPlaying = false;
+  var _videoPlayingInPost = false;
 
   @override
   void initState() {
@@ -49,6 +59,134 @@ class _FeedCardState extends State<FeedCard> {
     LocalDb.instance.isFavorite(widget.item.id, widget.item.type).then((v) {
       if (mounted) setState(() => _isSaved = v);
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _attachScrollMonitor();
+      _updateMusicPlayback();
+    });
+  }
+
+  @override
+  void dispose() {
+    final listener = _scrollListener;
+    final position = _scrollPosition;
+    if (listener != null && position != null) {
+      position.removeListener(listener);
+    }
+    if (identical(_activeMusicCard, this)) _activeMusicCard = null;
+    _musicPlayer?.dispose();
+    super.dispose();
+  }
+
+  List<String> get _savedMusicUrls {
+    final post = widget.item.socialPost;
+    final values = [
+      post?.metadata['musicUrl'],
+      post?.metadata['previewUrl'],
+      post?.metadata['audioUrl'],
+    ];
+    return values
+        .map((value) => value?.toString().trim() ?? '')
+        .where((url) => url.startsWith('http'))
+        .toSet()
+        .toList();
+  }
+
+  String? get _musicTitle {
+    final title = widget.item.socialPost?.metadata['music']?.toString().trim();
+    return title == null || title.isEmpty ? null : title;
+  }
+
+  void _attachScrollMonitor() {
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position == null || identical(position, _scrollPosition)) return;
+    final oldListener = _scrollListener;
+    final oldPosition = _scrollPosition;
+    if (oldListener != null && oldPosition != null) {
+      oldPosition.removeListener(oldListener);
+    }
+    _scrollPosition = position;
+    _scrollListener = _updateMusicPlayback;
+    position.addListener(_scrollListener!);
+  }
+
+  bool get _isMostlyVisible {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return false;
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final bottom = topLeft.dy + renderObject.size.height;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final visibleTop = topLeft.dy.clamp(0.0, screenHeight);
+    final visibleBottom = bottom.clamp(0.0, screenHeight);
+    return visibleBottom - visibleTop > renderObject.size.height * 0.45;
+  }
+
+  Future<void> _updateMusicPlayback() async {
+    if (_savedMusicUrls.isEmpty && _musicTitle == null) return;
+    if (_videoPlayingInPost || !_isMostlyVisible) {
+      await _stopMusic();
+      return;
+    }
+    await _playMusic();
+  }
+
+  Future<void> _playMusic() async {
+    if (_musicPlaying) return;
+    if (_activeMusicCard != null && !identical(_activeMusicCard, this)) {
+      await _activeMusicCard!._stopMusic();
+    }
+    final player = _musicPlayer ??= AudioPlayer();
+    await player.setReleaseMode(ReleaseMode.loop);
+    final savedPlayed = await _tryPlayMusicUrls(_savedMusicUrls);
+    if (savedPlayed) return;
+
+    final searchedPlayed = await _tryPlayMusicUrls(await _searchMusicUrls());
+    if (!searchedPlayed) await _stopMusic();
+  }
+
+  Future<bool> _tryPlayMusicUrls(List<String> urls) async {
+    final player = _musicPlayer;
+    if (player == null) return false;
+    for (final url in urls) {
+      try {
+        await player.stop();
+        await player.play(UrlSource(url));
+        _activeMusicCard = this;
+        _musicPlaying = true;
+        return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  Future<List<String>> _searchMusicUrls() async {
+    final cached = _searchedMusicUrls;
+    if (cached != null) return cached;
+    final title = _musicTitle;
+    if (title == null) return const [];
+    try {
+      final tracks = await widget.api.searchMusic(title);
+      _searchedMusicUrls = tracks
+          .map((track) => track['previewUrl']?.toString().trim() ?? '')
+          .where((url) => url.startsWith('http'))
+          .toSet()
+          .toList();
+    } catch (_) {}
+    return _searchedMusicUrls ?? const [];
+  }
+
+  Future<void> _stopMusic() async {
+    if (!_musicPlaying) return;
+    try {
+      await _musicPlayer?.stop();
+    } catch (_) {}
+    _musicPlaying = false;
+    if (identical(_activeMusicCard, this)) _activeMusicCard = null;
+  }
+
+  void _handlePostVideoPlay() {
+    _videoPlayingInPost = true;
+    _stopMusic();
   }
 
   Future<void> _toggleSave() async {
@@ -78,7 +216,7 @@ class _FeedCardState extends State<FeedCard> {
         },
         if (item.socialPost != null) ...{
           'title': item.socialPost!.body,
-          'subtitle': item.socialPost!.fullName ?? '',
+          'subtitle': item.socialPost!.fullName,
         },
         if (item.review != null) ...{
           'title': 'Review by ${item.review!.reviewerName ?? 'User'}',
@@ -118,11 +256,12 @@ class _FeedCardState extends State<FeedCard> {
         });
       } else {
         // Revert optimistic update on non-network errors
-        if (mounted)
+        if (mounted) {
           setState(() {
             _liked = prevLiked;
             _likeCount = prevCount;
           });
+        }
         messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
@@ -1223,7 +1362,8 @@ class _FeedCardState extends State<FeedCard> {
             const SizedBox(height: 10),
             _PostMediaGrid(
                 items: List<Map<String, dynamic>>.from(
-                    post.metadata['mediaItems'] as List)),
+                    post.metadata['mediaItems'] as List),
+                onVideoPlay: _handlePostVideoPlay),
           ] else ...[
             // Legacy single image / video
             if (post.image != null) ...[
@@ -1247,7 +1387,8 @@ class _FeedCardState extends State<FeedCard> {
             ],
             if (post.video != null) ...[
               const SizedBox(height: 10),
-              _InlineVideoPlayer(base64Video: post.video!),
+              _InlineVideoPlayer(
+                  base64Video: post.video!, onPlay: _handlePostVideoPlay),
             ],
           ],
           if (post.sharedSnapshot != null) ...[
@@ -1414,20 +1555,61 @@ class SharedPostPreview extends StatelessWidget {
 
   Widget _buildContent(BuildContext context, String type) {
     if (type == 'post') {
+      final body = snapshot['body']?.toString() ?? '';
+      final image = snapshot['image']?.toString();
+      final video = snapshot['video']?.toString();
+      final mediaItems = snapshot['mediaItems'] is List
+          ? List<Map<String, dynamic>>.from((snapshot['mediaItems'] as List)
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m)))
+          : const <Map<String, dynamic>>[];
+      final metadata = snapshot['metadata'] is Map
+          ? Map<String, dynamic>.from(snapshot['metadata'] as Map)
+          : <String, dynamic>{};
+      final gif = snapshot['gif']?.toString();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(snapshot['authorName']?.toString() ?? 'User',
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        const SizedBox(height: 4),
-        Text(snapshot['body']?.toString() ?? '',
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13)),
-        if (snapshot['image'] != null) ...[
+        if (body.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(body,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13)),
+        ],
+        if (metadata.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          PostMetadata(metadata: metadata),
+        ],
+        if (mediaItems.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _PostMediaGrid(items: mediaItems, onVideoPlay: () {}),
+        ] else if (image != null && image.isNotEmpty) ...[
           const SizedBox(height: 8),
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.memory(
-              base64Decode(snapshot['image'].toString()),
+            child: _sharedImage(
+              image,
+              height: 120,
+              width: double.infinity,
+              fit: BoxFit.cover,
+            ),
+          ),
+        ] else if (video != null && video.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: _InlineVideoPlayer(base64Video: video),
+            ),
+          ),
+        ] else if (gif != null && gif.startsWith('http')) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              gif,
               height: 120,
               width: double.infinity,
               fit: BoxFit.cover,
@@ -1516,6 +1698,30 @@ class SharedPostPreview extends StatelessWidget {
   }
 }
 
+Widget _sharedImage(String source,
+    {double? height, double? width, BoxFit fit = BoxFit.cover}) {
+  if (source.startsWith('http://') || source.startsWith('https://')) {
+    return Image.network(
+      source,
+      height: height,
+      width: width,
+      fit: fit,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+  }
+  try {
+    return Image.memory(
+      base64Decode(source),
+      height: height,
+      width: width,
+      fit: fit,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+  } catch (_) {
+    return const SizedBox.shrink();
+  }
+}
+
 // ── Share sheet ───────────────────────────────────────────────────────────────
 
 class ShareSheet extends StatefulWidget {
@@ -1569,11 +1775,17 @@ class _ShareSheetState extends State<ShareSheet> {
     }
     if (item.socialPost != null) {
       final p = item.socialPost!;
+      final mediaItems = p.metadata['mediaItems'];
+      final gif = p.metadata['gif']?.toString();
       return {
         'type': 'post',
         'body': p.body,
         'authorName': p.fullName,
+        'metadata': p.metadata,
         if (p.image != null) 'image': p.image,
+        if (p.video != null) 'video': p.video,
+        if (mediaItems is List) 'mediaItems': mediaItems,
+        if (gif != null && gif.isNotEmpty) 'gif': gif,
       };
     }
     if (item.review != null) {
@@ -1611,6 +1823,7 @@ class _ShareSheetState extends State<ShareSheet> {
           'body': _captionCtrl.text.trim(),
           'sharedFromType': widget.item.type,
           'sharedFromId': widget.item.id,
+          'sharedSnapshot': _snapshot,
         });
         if (mounted) {
           Navigator.pop(context);
@@ -1901,8 +2114,9 @@ class _ActionBtn extends StatelessWidget {
 // ─── Multi-media grid (feed display) ──────────────────────────────────────────
 
 class _PostMediaGrid extends StatelessWidget {
-  const _PostMediaGrid({required this.items});
+  const _PostMediaGrid({required this.items, required this.onVideoPlay});
   final List<Map<String, dynamic>> items;
+  final VoidCallback onVideoPlay;
 
   Widget _cell(Map<String, dynamic> item) {
     final type = item['type']?.toString() ?? 'image';
@@ -1910,7 +2124,7 @@ class _PostMediaGrid extends StatelessWidget {
     if (type == 'video') {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: _InlineVideoPlayer(base64Video: url),
+        child: _InlineVideoPlayer(base64Video: url, onPlay: onVideoPlay),
       );
     }
     return ClipRRect(
@@ -1936,80 +2150,50 @@ class _PostMediaGrid extends StatelessWidget {
         child: _cell(items[0]),
       );
     }
-    if (count == 2) {
-      return SizedBox(
-        height: 200,
-        child: Row(children: [
-          Expanded(child: _cell(items[0])),
-          const SizedBox(width: 3),
-          Expanded(child: _cell(items[1])),
-        ]),
-      );
-    }
-    if (count == 3) {
-      return SizedBox(
-        height: 200,
-        child: Row(children: [
-          Expanded(flex: 3, child: _cell(items[0])),
-          const SizedBox(width: 3),
-          Expanded(
-            flex: 2,
-            child: Column(children: [
-              Expanded(child: _cell(items[1])),
-              const SizedBox(height: 3),
-              Expanded(child: _cell(items[2])),
-            ]),
-          ),
-        ]),
-      );
-    }
-    // 4+ items: 2-column grid, max 4 shown with "+N more" overlay
-    final show = items.take(4).toList();
-    final extra = count - 4;
-    final rows = (show.length / 2).ceil();
-    return Column(
-      children: List.generate(rows, (r) {
-        final a = r * 2;
-        final b = a + 1;
-        final isLastRow = r == rows - 1;
-        return Padding(
-          padding: EdgeInsets.only(top: r > 0 ? 3 : 0),
-          child: SizedBox(
-            height: 140,
-            child: Row(children: [
-              Expanded(child: _cell(show[a])),
-              const SizedBox(width: 3),
-              Expanded(
-                child: b < show.length
-                    ? (isLastRow && extra > 0
-                        ? Stack(fit: StackFit.expand, children: [
-                            _cell(show[b]),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                color: Colors.black54,
-                                alignment: Alignment.center,
-                                child: Text('+$extra',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.w900)),
-                              ),
-                            ),
-                          ])
-                        : _cell(show[b]))
-                    : const SizedBox(),
+
+    final width = MediaQuery.sizeOf(context).width - 72;
+    return SizedBox(
+      height: 260,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        itemCount: count,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) => SizedBox(
+          width: width.clamp(240.0, 420.0),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _cell(items[index]),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${index + 1}/$count',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
               ),
-            ]),
+            ],
           ),
-        );
-      }),
+        ),
+      ),
     );
   }
 }
 
-/// Ensures the Cloudinary URL uses MP4 container for Android/iOS compatibility.
-/// Avoids vc_h264 re-encode since uploaded videos are already H.264.
+/// Ensures the Cloudinary URL uses MP4/H.264 for Android/iOS fallback playback.
 String _toCloudinaryMp4(String url) {
   if (!url.contains('res.cloudinary.com')) return url;
   if (url.contains('/upload/f_mp4,vc_h264') ||
@@ -2038,61 +2222,45 @@ Widget _buildProfilePic(String pic, String initials) {
 }
 
 class _InlineVideoPlayer extends StatefulWidget {
-  const _InlineVideoPlayer({required this.base64Video});
+  const _InlineVideoPlayer({required this.base64Video, this.onPlay});
   final String base64Video;
+  final VoidCallback? onPlay;
 
   @override
   State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
 }
 
 class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  static VideoPlayerController? _activeVideoController;
+
   VideoPlayerController? _controller;
+  VoidCallback? _playbackListener;
+  ScrollPosition? _scrollPosition;
+  VoidCallback? _scrollListener;
   bool _initialized = false;
   bool _error = false;
+  bool _muted = false;
 
   @override
   void initState() {
     super.initState();
+    final cached = VideoControllerCache.peek(widget.base64Video);
+    if (cached?.isReady == true) {
+      _controller = cached!.controller;
+      _initialized = true;
+      cached.touch();
+      _attachPlaybackMonitor(cached.controller);
+    }
     _init();
   }
 
   Future<void> _init() async {
     try {
-      VideoPlayerController ctrl;
       final v = widget.base64Video;
-      if (v.startsWith('http://') || v.startsWith('https://')) {
-        final transformed = _toCloudinaryMp4(v);
-        ctrl = VideoPlayerController.networkUrl(
-          Uri.parse(transformed),
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
-        try {
-          await ctrl.initialize();
-        } catch (_) {
-          // Transformed URL failed — retry with original
-          if (transformed != v) {
-            await ctrl.dispose();
-            ctrl = VideoPlayerController.networkUrl(
-              Uri.parse(v),
-              videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-            );
-            await ctrl.initialize();
-          } else {
-            rethrow;
-          }
-        }
-      } else {
-        // base64 — decode and write to temp file
-        final payload = v.contains(',') ? v.split(',').last : v;
-        final bytes = base64Decode(payload);
-        final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/post_video_${widget.hashCode}.mp4');
-        await file.writeAsBytes(bytes);
-        ctrl = VideoPlayerController.file(file,
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
-        await ctrl.initialize();
-      }
+      final ctrl = await _controllerFor(v);
+      if (identical(_controller, ctrl) && _initialized) return;
       if (mounted) {
+        _attachPlaybackMonitor(ctrl);
         setState(() {
           _controller = ctrl;
           _initialized = true;
@@ -2106,8 +2274,115 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
   @override
   void dispose() {
-    _controller?.dispose();
+    final listener = _playbackListener;
+    if (listener != null) {
+      _controller?.removeListener(listener);
+    }
+    final scrollListener = _scrollListener;
+    final scrollPosition = _scrollPosition;
+    if (scrollListener != null && scrollPosition != null) {
+      scrollPosition.removeListener(scrollListener);
+    }
+    if (identical(_activeVideoController, _controller)) {
+      _activeVideoController = null;
+    }
+    _controller?.pause();
     super.dispose();
+  }
+
+  void _attachPlaybackMonitor(VideoPlayerController ctrl) {
+    final oldListener = _playbackListener;
+    if (oldListener != null) {
+      _controller?.removeListener(oldListener);
+    }
+    _playbackListener = () {
+      if (ctrl.value.isPlaying) _attachScrollMonitor();
+    };
+    ctrl.addListener(_playbackListener!);
+  }
+
+  void _attachScrollMonitor() {
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position == null || identical(position, _scrollPosition)) return;
+
+    final oldListener = _scrollListener;
+    final oldPosition = _scrollPosition;
+    if (oldListener != null && oldPosition != null) {
+      oldPosition.removeListener(oldListener);
+    }
+
+    _scrollPosition = position;
+    _scrollListener = () => _pauseIfOffscreen();
+    position.addListener(_scrollListener!);
+  }
+
+  void _pauseIfOffscreen() {
+    final ctrl = _controller;
+    if (!mounted || ctrl == null || !ctrl.value.isPlaying) return;
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final bottom = topLeft.dy + renderObject.size.height;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final visibleTop = topLeft.dy.clamp(0.0, screenHeight);
+    final visibleBottom = bottom.clamp(0.0, screenHeight);
+    final visibleHeight = visibleBottom - visibleTop;
+
+    if (visibleHeight <= renderObject.size.height * 0.1) {
+      ctrl.pause();
+    }
+  }
+
+  Future<void> _toggleMute() async {
+    final ctrl = _controller;
+    if (ctrl == null) return;
+    final nextMuted = !_muted;
+    await ctrl.setVolume(nextMuted ? 0 : 1);
+    if (mounted) setState(() => _muted = nextMuted);
+  }
+
+  Future<VideoPlayerController> _controllerFor(String source) async {
+    return VideoControllerCache.get(source, () => _createController(source));
+  }
+
+  Future<VideoPlayerController> _createController(String source) async {
+    VideoPlayerController ctrl;
+    if (source.startsWith('http://') || source.startsWith('https://')) {
+      final transformed = _toCloudinaryMp4(source);
+      ctrl = VideoPlayerController.networkUrl(
+        Uri.parse(source),
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      try {
+        await ctrl.initialize();
+      } catch (_) {
+        // Original URL failed; retry with a Cloudinary mobile-friendly transform.
+        if (transformed != source) {
+          await ctrl.dispose();
+          ctrl = VideoPlayerController.networkUrl(
+            Uri.parse(transformed),
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+          );
+          await ctrl.initialize();
+        } else {
+          rethrow;
+        }
+      }
+    } else {
+      final payload = source.contains(',') ? source.split(',').last : source;
+      final bytes = base64Decode(payload);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/post_video_${source.hashCode}.mp4');
+      if (!await file.exists()) {
+        await file.writeAsBytes(bytes);
+      }
+      ctrl = VideoPlayerController.file(file,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
+      await ctrl.initialize();
+    }
+    return ctrl;
   }
 
   @override
@@ -2153,6 +2428,12 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                 if (value.isPlaying) {
                   ctrl.pause();
                 } else {
+                  final active = _activeVideoController;
+                  if (active != null && !identical(active, ctrl)) {
+                    active.pause();
+                  }
+                  _activeVideoController = ctrl;
+                  widget.onPlay?.call();
                   ctrl.play();
                 }
               },
@@ -2169,6 +2450,23 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                         child: const Icon(Icons.play_arrow,
                             color: Colors.white, size: 40),
                       ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: Material(
+              color: Colors.black54,
+              shape: const CircleBorder(),
+              child: IconButton(
+                icon: Icon(
+                  _muted ? Icons.volume_off : Icons.volume_up,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                visualDensity: VisualDensity.compact,
+                onPressed: _toggleMute,
               ),
             ),
           ),
