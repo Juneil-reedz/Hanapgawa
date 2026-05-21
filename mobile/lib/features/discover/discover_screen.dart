@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -933,6 +934,7 @@ class _StoryViewerState extends State<_StoryViewer> {
   var _viewers = <Map<String, dynamic>>[];
   var _loadingViewers = false;
   String? _floatingReaction;
+  final _player = AudioPlayer();
 
   StoryItem get _story => widget.stories[_index];
   bool get _isOwner => widget.api.storedUser?.id == _story.userId;
@@ -943,6 +945,22 @@ class _StoryViewerState extends State<_StoryViewer> {
     _index = widget.initialIndex.clamp(0, widget.stories.length - 1);
     _markViewed();
     if (_isOwner) _loadViewers();
+    _playStoryMusic();
+  }
+
+  void _playStoryMusic() {
+    final url = _story.metadata['musicUrl']?.toString();
+    if (url != null && url.isNotEmpty) {
+      _player.play(UrlSource(url)).catchError((_) {});
+    } else {
+      _player.stop().catchError((_) {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
   }
 
   void _markViewed() {
@@ -964,6 +982,7 @@ class _StoryViewerState extends State<_StoryViewer> {
     });
     _markViewed();
     if (_isOwner) _loadViewers();
+    _playStoryMusic();
   }
 
   Future<void> _loadViewers() async {
@@ -1470,6 +1489,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   String? _gif;
   String? _location;
   String? _music;
+  String? _musicUrl;
   var _privacy = 'Public';
   var _backgroundColor = appPrimary;
   var _posting = false;
@@ -1557,8 +1577,10 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       ),
     );
     if (item != null) {
-      setState(() => _music =
-          '${item['title'] ?? 'Track'} - ${item['artist'] ?? 'Artist'}');
+      setState(() {
+        _music = '${item['title'] ?? 'Track'} - ${item['artist'] ?? 'Artist'}';
+        _musicUrl = item['previewUrl']?.toString();
+      });
     }
   }
 
@@ -1574,6 +1596,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (_gif != null) 'gif': _gif,
       if (_location != null) 'location': _location,
       if (_music != null) 'music': _music,
+      if (_musicUrl != null) 'musicUrl': _musicUrl,
       'backgroundColor': _backgroundColor.value,
     };
     if (!SyncService.instance.isOnline) {
@@ -2010,6 +2033,7 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
   String? _location;
   String? _gif;
   String? _music;
+  String? _musicUrl;
   String? _sticker;
   Color? _backgroundColor;
   final _tags = <String>[];
@@ -2224,7 +2248,10 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
       ),
     );
     if (value != null && mounted) {
-      setState(() => _music = '${value['title']} - ${value['artist']}');
+      setState(() {
+        _music = '${value['title']} - ${value['artist']}';
+        _musicUrl = value['previewUrl']?.toString();
+      });
     }
   }
 
@@ -2269,6 +2296,7 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
         if (_location != null) 'location': _location,
         if (_gif != null) 'gif': _gif,
         if (_music != null) 'music': _music,
+        if (_musicUrl != null) 'musicUrl': _musicUrl,
         if (_sticker != null) 'sticker': _sticker,
         if (_backgroundColor != null) 'backgroundColor': _backgroundColor!.value,
       };
