@@ -1,4 +1,4 @@
-const Brevo = require('@getbrevo/brevo');
+const { TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 
 const { env } = require('../config/env');
 
@@ -7,7 +7,7 @@ let client;
 function getClient() {
   if (!env.brevoApiKey) return null;
   if (!client) {
-    client = new Brevo.TransactionalEmailsApi();
+    client = new TransactionalEmailsApi();
     client.authentications['api-key'].apiKey = env.brevoApiKey;
   }
   return client;
@@ -20,7 +20,7 @@ async function sendEmailVerificationCode({ email, code }) {
     return { sent: false, reason: 'Brevo API key is not configured.' };
   }
 
-  const sendSmtpEmail = new Brevo.SendSmtpEmail();
+  const sendSmtpEmail = new SendSmtpEmail();
   sendSmtpEmail.to = [{ email }];
   sendSmtpEmail.sender = { name: 'HanapGawa', email: env.emailFrom.includes('<') ? env.emailFrom.match(/<(.+)>/)[1] : env.emailFrom };
   sendSmtpEmail.subject = 'Verify your HanapGawa account';
