@@ -1,43 +1,39 @@
-const nodemailer = require('nodemailer');
+const Brevo = require('@getbrevo/brevo');
 
 const { env } = require('../config/env');
 
-let transporter;
+let client;
 
-function getTransporter() {
-  if (!env.gmailUser || !env.gmailAppPassword) return null;
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: env.gmailUser,
-        pass: env.gmailAppPassword,
-      },
-    });
+function getClient() {
+  if (!env.brevoApiKey) return null;
+  if (!client) {
+    client = new Brevo.TransactionalEmailsApi();
+    client.authentications['api-key'].apiKey = env.brevoApiKey;
   }
-  return transporter;
+  return client;
 }
 
 async function sendEmailVerificationCode({ email, code }) {
-  const transport = getTransporter();
+  const brevo = getClient();
 
-  if (!transport) {
-    return { sent: false, reason: 'Gmail credentials are not configured.' };
+  if (!brevo) {
+    return { sent: false, reason: 'Brevo API key is not configured.' };
   }
 
-  await transport.sendMail({
-    from: env.emailFrom || `HanapGawa <${env.gmailUser}>`,
-    to: email,
-    subject: 'Verify your HanapGawa account',
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #222; max-width: 520px; margin: 0 auto; padding: 28px;">
-        <h2 style="margin: 0 0 12px; text-align: center; color: #2f203f;">Verify your HanapGawa account</h2>
-        <p style="margin: 0 0 18px; text-align: center; color: #604f6f;">Enter this verification code to finish creating your account:</p>
-        <p style="margin: 0 auto 18px; width: fit-content; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #2f203f;">${code}</p>
-        <p style="margin: 0; text-align: center; color: #604f6f;">This code expires in 15 minutes.</p>
-      </div>
-    `,
-  });
+  const sendSmtpEmail = new Brevo.SendSmtpEmail();
+  sendSmtpEmail.to = [{ email }];
+  sendSmtpEmail.sender = { name: 'HanapGawa', email: env.emailFrom.includes('<') ? env.emailFrom.match(/<(.+)>/)[1] : env.emailFrom };
+  sendSmtpEmail.subject = 'Verify your HanapGawa account';
+  sendSmtpEmail.htmlContent = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #222; max-width: 520px; margin: 0 auto; padding: 28px;">
+      <h2 style="margin: 0 0 12px; text-align: center; color: #2f203f;">Verify your HanapGawa account</h2>
+      <p style="margin: 0 0 18px; text-align: center; color: #604f6f;">Enter this verification code to finish creating your account:</p>
+      <p style="margin: 0 auto 18px; width: fit-content; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #2f203f;">${code}</p>
+      <p style="margin: 0; text-align: center; color: #604f6f;">This code expires in 15 minutes.</p>
+    </div>
+  `;
+
+  await brevo.sendTransacEmail(sendSmtpEmail);
 
   return { sent: true };
 }

@@ -17,6 +17,7 @@
   },
   "type": "commonjs",
   "dependencies": {
+    "@getbrevo/brevo": "^5.0.4",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -26,10 +27,8 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.2.0",
     "morgan": "^1.10.1",
-    "nodemailer": "^8.0.7",
     "pg": "^8.20.0",
     "redis": "^5.12.1",
-    "resend": "^6.12.3",
     "zod": "^4.4.1"
   },
   "devDependencies": {
