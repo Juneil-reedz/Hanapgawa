@@ -81,12 +81,14 @@ async function registerUser({ email, password, role, fullName }) {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const user = await createUser({ email, passwordHash, role, fullName, emailVerifiedAt: new Date() });
+  const user = await createUser({ email, passwordHash, role, fullName });
+  const verification = await createVerificationCode(user);
 
   return {
     user: buildPublicUser(user),
-    token: signAccessToken(user),
-    emailVerificationRequired: false,
+    emailVerificationRequired: true,
+    emailSent: verification.emailSent,
+    ...(!verification.emailSent && env.nodeEnv !== 'production' ? { devVerificationCode: verification.code } : {}),
   };
 }
 

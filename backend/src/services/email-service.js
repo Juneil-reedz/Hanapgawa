@@ -1,24 +1,32 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const { env } = require('../config/env');
 
-let resend;
+let transporter;
 
-function getResend() {
-  if (!env.resendApiKey) return null;
-  if (!resend) resend = new Resend(env.resendApiKey);
-  return resend;
+function getTransporter() {
+  if (!env.gmailUser || !env.gmailAppPassword) return null;
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: env.gmailUser,
+        pass: env.gmailAppPassword,
+      },
+    });
+  }
+  return transporter;
 }
 
 async function sendEmailVerificationCode({ email, code }) {
-  const client = getResend();
+  const transport = getTransporter();
 
-  if (!client) {
-    return { sent: false, reason: 'Resend API key is not configured.' };
+  if (!transport) {
+    return { sent: false, reason: 'Gmail credentials are not configured.' };
   }
 
-  const { error } = await client.emails.send({
-    from: env.emailFrom,
+  await transport.sendMail({
+    from: env.emailFrom || `HanapGawa <${env.gmailUser}>`,
     to: email,
     subject: 'Verify your HanapGawa account',
     html: `
@@ -30,10 +38,6 @@ async function sendEmailVerificationCode({ email, code }) {
       </div>
     `,
   });
-
-  if (error) {
-    throw new Error(error.message || 'Resend email send failed.');
-  }
 
   return { sent: true };
 }
