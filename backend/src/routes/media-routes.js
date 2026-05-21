@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
@@ -107,6 +108,21 @@ router.get('/locations/search', asyncHandler(async (req, res) => {
     longitude: place.lon,
   }));
   res.json({ locations });
+}));
+
+// Returns a signed Cloudinary upload params so Flutter can upload directly
+router.get('/cloudinary-signature', authenticate, asyncHandler(async (req, res) => {
+  const { cloudinaryCloudName, cloudinaryApiKey, cloudinaryApiSecret } = env;
+  if (!cloudinaryCloudName || !cloudinaryApiKey || !cloudinaryApiSecret) {
+    throw new HttpError(503, 'Media upload is not configured.');
+  }
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const folder = 'hanapgawa/posts';
+  const signature = crypto
+    .createHash('sha1')
+    .update(`folder=${folder}&timestamp=${timestamp}${cloudinaryApiSecret}`)
+    .digest('hex');
+  res.json({ cloudName: cloudinaryCloudName, apiKey: cloudinaryApiKey, timestamp, folder, signature });
 }));
 
 router.get('/music/search', asyncHandler(async (req, res) => {

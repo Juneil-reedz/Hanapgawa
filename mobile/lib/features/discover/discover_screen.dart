@@ -2313,8 +2313,14 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
     }
     final metadata = _metadata();
     final image = _imageBytes != null ? base64Encode(_imageBytes!) : null;
-    final video = _videoBytes != null ? base64Encode(_videoBytes!) : null;
     setState(() { _posting = true; _error = null; });
+
+    // Upload video directly to Cloudinary before posting to avoid backend timeout
+    String? video;
+    if (_videoBytes != null) {
+      video = await widget.api.uploadToCloudinary(
+        base64Encode(_videoBytes!), 'video');
+    }
 
     Future<void> queueAndClose() async {
       await LocalDb.instance.queueAction('create_social_post', {

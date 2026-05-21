@@ -195,6 +195,7 @@ class _AuthScreenState extends State<AuthScreen> {
       _message = '';
     });
     try {
+      await _googleSignIn.signOut();
       final account = await _googleSignIn.signIn();
       if (account == null) {
         setState(() => _loading = false);

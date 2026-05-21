@@ -636,6 +636,48 @@ class MarketplaceApi {
     return listOf(json['tracks'], (m) => m);
   }
 
+  /// Uploads a file (base64 string) directly to Cloudinary and returns the URL.
+  /// Falls back to returning the base64 as-is if Cloudinary is not configured.
+  Future<String> uploadToCloudinary(String base64Data, String resourceType) async {
+    try {
+      final sig = await _get('/media/cloudinary-signature', auth: true);
+      final cloudName = sig['cloudName'] as String;
+      final apiKey = sig['apiKey'] as String;
+      final timestamp = sig['timestamp'] as String;
+      final folder = sig['folder'] as String;
+      final signature = sig['signature'] as String;
+
+      final mime = resourceType == 'video' ? 'video/mp4' : 'image/jpeg';
+      final dataUri = base64Data.startsWith('data:')
+          ? base64Data
+          : 'data:$mime;base64,$base64Data';
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/auto/upload'),
+      );
+      request.fields['api_key'] = apiKey;
+      request.fields['timestamp'] = timestamp;
+      request.fields['folder'] = folder;
+      request.fields['signature'] = signature;
+      final bytes = base64Decode(
+          dataUri.contains(',') ? dataUri.split(',').last : dataUri);
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: resourceType == 'video' ? 'upload.mp4' : 'upload.jpg',
+      ));
+
+      final streamed = await request.send().timeout(const Duration(minutes: 5));
+      final body = await streamed.stream.bytesToString();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      if (streamed.statusCode >= 400) return base64Data;
+      return json['secure_url'] as String? ?? base64Data;
+    } catch (_) {
+      return base64Data;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> searchStickers(String query) async {
     final json = await _get('/media/stickers/search', query: {'q': query});
     return listOf(json['stickers'], (m) => m);
