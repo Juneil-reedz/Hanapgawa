@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/api/marketplace_api.dart';
 import '../../core/local/local_db.dart';
@@ -1220,43 +1223,27 @@ class _FeedCardState extends State<FeedCard> {
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: post.image!.startsWith('http')
-                  ? Image.network(
-                      post.image!,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    )
-                  : Image.memory(
-                      base64Decode(post.image!),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: post.image!.startsWith('http')
+                    ? Image.network(
+                        post.image!,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      )
+                    : Image.memory(
+                        base64Decode(post.image!),
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+              ),
             ),
           ],
           if (post.video != null) ...[
             const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(children: [
-                const Icon(Icons.play_circle_fill,
-                    color: Colors.white, size: 34),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Video attached (${(post.video!.length * 3 / 4 / 1024 / 1024).toStringAsFixed(1)} MB)',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ]),
-            ),
+            _InlineVideoPlayer(base64Video: post.video!),
           ],
           if (post.sharedSnapshot != null) ...[
             const SizedBox(height: 10),
@@ -1905,4 +1892,115 @@ class _ActionBtn extends StatelessWidget {
           ],
         ]),
       );
+}
+
+class _InlineVideoPlayer extends StatefulWidget {
+  const _InlineVideoPlayer({required this.base64Video});
+  final String base64Video;
+
+  @override
+  State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
+}
+
+class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final bytes = base64Decode(widget.base64Video);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/post_video_${widget.hashCode}.mp4');
+      await file.writeAsBytes(bytes);
+      final ctrl = VideoPlayerController.file(file);
+      await ctrl.initialize();
+      if (mounted) {
+        setState(() {
+          _controller = ctrl;
+          _initialized = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return Container(
+        height: 80,
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Center(
+          child: Text('Could not load video',
+              style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+    if (!_initialized || _controller == null) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+    final ctrl = _controller!;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          AspectRatio(
+            aspectRatio: ctrl.value.aspectRatio,
+            child: VideoPlayer(ctrl),
+          ),
+          ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: ctrl,
+            builder: (_, value, __) => GestureDetector(
+              onTap: () {
+                if (value.isPlaying) {
+                  ctrl.pause();
+                } else {
+                  ctrl.play();
+                }
+              },
+              child: Container(
+                color: Colors.transparent,
+                child: value.isPlaying
+                    ? const SizedBox.shrink()
+                    : Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.black45,
+                          shape: BoxShape.circle,
+                        ),
+                        padding: const EdgeInsets.all(12),
+                        child: const Icon(Icons.play_arrow,
+                            color: Colors.white, size: 40),
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
