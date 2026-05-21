@@ -54,9 +54,7 @@ class SyncService {
   Future<bool> _pingBackend() async {
     if (_api == null) return false;
     try {
-      final baseUrl = Platform.isAndroid
-          ? 'http://10.0.2.2:4000/api/v1'
-          : 'http://localhost:4000/api/v1';
+      const baseUrl = 'https://hanapgawa.onrender.com/api/v1';
       final response = await http
           .get(Uri.parse('$baseUrl/health'))
           .timeout(const Duration(seconds: 5));

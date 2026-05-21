@@ -18,8 +18,7 @@ class MarketplaceApi {
   String get _baseUrl {
     const configured = String.fromEnvironment('API_BASE_URL');
     if (configured.isNotEmpty) return configured;
-    if (Platform.isAndroid) return 'http://10.0.2.2:4000/api/v1';
-    return 'http://localhost:4000/api/v1';
+    return 'https://hanapgawa.onrender.com/api/v1';
   }
 
   String get token => _prefs.getString(_tokenKey) ?? '';
