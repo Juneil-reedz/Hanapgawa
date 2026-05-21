@@ -28,6 +28,7 @@
     "morgan": "^1.10.1",
     "pg": "^8.20.0",
     "redis": "^5.12.1",
+    "resend": "^6.12.3",
     "zod": "^4.4.1"
   },
   "devDependencies": {

@@ -16,10 +16,8 @@ const env = {
   mongodbDbName: process.env.MONGODB_DB_NAME || 'hanapgawa',
   redisUrl: process.env.REDIS_URL || '',
   redisReadUrl: process.env.REDIS_READ_URL || '',
-  zentromailApiKey: process.env.ZENTROMAIL_API_KEY || '',
-  zentromailApiUrl:
-    process.env.ZENTROMAIL_API_URL || 'https://email-service-app-0dpw.onrender.com/send-email-html',
-  emailFrom: process.env.EMAIL_FROM || 'HanapGawa <verified-sender@example.com>',
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || 'HanapGawa <onboarding@resend.dev>',
   emailLogoPath: process.env.EMAIL_LOGO_PATH || '',
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   giphyApiKey: process.env.GIPHY_API_KEY || '',
