@@ -1915,11 +1915,17 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
 
   Future<void> _init() async {
     try {
-      final bytes = base64Decode(widget.base64Video);
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/post_video_${widget.hashCode}.mp4');
-      await file.writeAsBytes(bytes);
-      final ctrl = VideoPlayerController.file(file);
+      VideoPlayerController ctrl;
+      final v = widget.base64Video;
+      if (v.startsWith('http://') || v.startsWith('https://')) {
+        ctrl = VideoPlayerController.networkUrl(Uri.parse(v));
+      } else {
+        final bytes = base64Decode(v);
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/post_video_${widget.hashCode}.mp4');
+        await file.writeAsBytes(bytes);
+        ctrl = VideoPlayerController.file(file);
+      }
       await ctrl.initialize();
       if (mounted) {
         setState(() {

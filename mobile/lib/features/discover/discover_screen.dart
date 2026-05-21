@@ -948,12 +948,25 @@ class _StoryViewerState extends State<_StoryViewer> {
     _playStoryMusic();
   }
 
-  void _playStoryMusic() {
+  Future<void> _playStoryMusic() async {
     final url = _story.metadata['musicUrl']?.toString();
     if (url != null && url.isNotEmpty) {
-      _player.play(UrlSource(url)).catchError((_) {});
+      await _player.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.media,
+          audioFocus: AndroidAudioFocus.gain,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+          options: {AVAudioSessionOptions.defaultToSpeaker},
+        ),
+      ));
+      await _player.play(UrlSource(url));
     } else {
-      _player.stop().catchError((_) {});
+      await _player.stop();
     }
   }
 
