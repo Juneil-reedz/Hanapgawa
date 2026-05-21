@@ -687,6 +687,10 @@ class MarketplaceApi {
   /// rather than loading all bytes into memory.
   Future<String> uploadFileToCloudinary(
       String filePath, String resourceType) async {
+    if (resourceType == 'video') {
+      // Avoid long direct Cloudinary waits on mobile; backend will upload this.
+      return _fileDataUri(filePath, resourceType);
+    }
     try {
       final sig = await _get('/media/cloudinary-signature', auth: true);
       final cloudName = sig['cloudName'] as String;
@@ -712,7 +716,7 @@ class MarketplaceApi {
       request.files.add(multiFile);
 
       final streamed =
-          await request.send().timeout(const Duration(minutes: 10));
+          await request.send().timeout(const Duration(seconds: 45));
       final body = await streamed.stream.bytesToString();
       if (streamed.statusCode >= 400) {
         return _fileDataUri(filePath, resourceType);

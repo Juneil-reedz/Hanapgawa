@@ -1877,7 +1877,10 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   }
 
   Future<void> _pickVideo() async {
-    final file = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    final file = await ImagePicker().pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 60),
+    );
     if (file == null || !mounted) return;
     setState(() {
       _posting = true;
@@ -1886,7 +1889,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     try {
       final info = await VideoCompress.compressVideo(
         file.path,
-        quality: VideoQuality.MediumQuality,
+        quality: VideoQuality.LowQuality,
         deleteOrigin: false,
         includeAudio: true,
       );
@@ -1902,9 +1905,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (!mounted) return;
       setState(() {
         _posting = false;
-        _videoPath = file.path;
-        _imageBytes = null;
-        _gif = null;
+        _error = 'Video compression failed. Try a shorter video.';
       });
     }
   }
@@ -2542,13 +2543,16 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
 
   Future<void> _pickVideo() async {
     if (_mediaDrafts.length >= _maxMedia) return;
-    final file = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    final file = await ImagePicker().pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 60),
+    );
     if (file == null || !mounted) return;
     setState(() => _posting = true);
     try {
       final info = await VideoCompress.compressVideo(
         file.path,
-        quality: VideoQuality.MediumQuality,
+        quality: VideoQuality.LowQuality,
         deleteOrigin: false,
         includeAudio: true,
       );
@@ -2559,11 +2563,10 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
           _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: path));
         });
     } catch (_) {
-      // Compression failed — use original file path
       if (mounted)
         setState(() {
           _posting = false;
-          _mediaDrafts.add(_MediaDraft(isVideo: true, filePath: file.path));
+          _error = 'Video compression failed. Try a shorter video.';
         });
     }
   }
