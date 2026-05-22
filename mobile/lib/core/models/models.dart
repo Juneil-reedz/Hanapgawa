@@ -417,26 +417,38 @@ class SocialPost {
 class ProfilePhoto {
   ProfilePhoto({
     required this.id,
-    required this.image,
     required this.createdAt,
+    this.image,
+    this.video,
     this.caption = '',
+    this.source = 'photo',
   });
   final String id;
-  final String image;
+  final String? image;
+  final String? video;
   final String caption;
   final DateTime createdAt;
+  final String source;
+
+  bool get isUrl => (image?.startsWith('http') ?? false) || (video?.startsWith('http') ?? false);
+  bool get isVideo => video != null && video!.isNotEmpty;
+  bool get isDeletable => source == 'photo';
 
   factory ProfilePhoto.fromJson(Map<String, dynamic> json) => ProfilePhoto(
         id: json['id']?.toString() ?? '',
-        image: json['image']?.toString() ?? '',
+        image: json['image']?.toString(),
+        video: json['video']?.toString(),
         caption: json['caption']?.toString() ?? '',
         createdAt: parseDate(json['createdAt']),
+        source: json['source']?.toString() ?? 'photo',
       );
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'image': image,
+        'video': video,
         'caption': caption,
+        'source': source,
         'createdAt': createdAt.toIso8601String(),
       };
 }

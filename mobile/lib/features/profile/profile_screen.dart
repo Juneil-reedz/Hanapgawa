@@ -226,7 +226,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             }).toList(),
             'photos': photos.map((p) => {
               'id': p.id,
+              'image': p.isUrl ? p.image : null,
+              'video': p.video,
               'caption': p.caption,
+              'source': p.source,
               'createdAt': p.createdAt.toIso8601String(),
             }).toList(),
             'jobPosts': jobPosts.map((j) => j.toJson()).toList(),
@@ -950,7 +953,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           appBar: AppBar(
             backgroundColor: Colors.black,
             foregroundColor: Colors.white,
-            actions: _isOwnProfile
+            actions: (_isOwnProfile && photo.isDeletable)
                 ? [
                     IconButton(
                       icon:
@@ -965,14 +968,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           body: Center(
             child: InteractiveViewer(
-              child: Image.memory(
-                base64Decode(photo.image),
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.white,
-                    size: 64),
-              ),
+              child: photo.isUrl
+                  ? Image.network(
+                      (photo.image ?? photo.video)!,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white,
+                          size: 64),
+                    )
+                  : Image.memory(
+                      base64Decode(photo.image ?? ''),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white,
+                          size: 64),
+                    ),
             ),
           ),
         ),
@@ -1524,19 +1536,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           final photo = _photos[index];
                           return GestureDetector(
                             onTap: () => _viewPhoto(photo),
-                            onLongPress: _isOwnProfile
+                            onLongPress: (_isOwnProfile && photo.isDeletable)
                                 ? () => _deletePhoto(photo)
                                 : null,
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(
-                                base64Decode(photo.image),
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: Colors.grey.shade200,
-                                  child: const Icon(Icons.broken_image_outlined,
-                                      color: Colors.grey),
-                                ),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  if (photo.isUrl && photo.image != null)
+                                    Image.network(
+                                      photo.image!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: Colors.grey.shade200,
+                                        child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+                                      ),
+                                    )
+                                  else if (photo.isVideo)
+                                    Container(
+                                      color: Colors.grey.shade900,
+                                      child: const Icon(Icons.play_circle_outline, color: Colors.white70, size: 36),
+                                    )
+                                  else if (photo.image != null && photo.image!.isNotEmpty)
+                                    Image.memory(
+                                      base64Decode(photo.image!),
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: Colors.grey.shade200,
+                                        child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+                                      ),
+                                    )
+                                  else
+                                    Container(color: Colors.grey.shade200),
+                                  if (photo.isVideo)
+                                    const Positioned(
+                                      bottom: 6,
+                                      right: 6,
+                                      child: Icon(Icons.videocam, color: Colors.white, size: 18),
+                                    ),
+                                ],
                               ),
                             ),
                           );

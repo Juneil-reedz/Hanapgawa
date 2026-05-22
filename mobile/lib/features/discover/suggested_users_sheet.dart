@@ -141,6 +141,7 @@ class _SuggestedUsersSheetState extends State<SuggestedUsersSheet> {
   List<UserSearchResult> _users = [];
   final Set<String> _followed = {};
   final Set<String> _following = {};
+  final Set<String> _dismissed = {};
   bool _loading = true;
 
   @override
@@ -222,14 +223,19 @@ class _SuggestedUsersSheetState extends State<SuggestedUsersSheet> {
                             style: TextStyle(color: appMuted)))
                     : ListView.separated(
                         controller: scroll,
-                        itemCount: _users.length,
+                        itemCount: _users.where((u) => !_dismissed.contains(u.id)).length,
                         separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) => _SuggestedUserTile(
-                          user: _users[i],
-                          isFollowed: _followed.contains(_users[i].id),
-                          isLoading: _following.contains(_users[i].id),
-                          onToggle: () => _toggle(_users[i]),
-                        ),
+                        itemBuilder: (_, i) {
+                          final visible = _users.where((u) => !_dismissed.contains(u.id)).toList();
+                          final u = visible[i];
+                          return _SuggestedUserTile(
+                            user: u,
+                            isFollowed: _followed.contains(u.id),
+                            isLoading: _following.contains(u.id),
+                            onToggle: () => _toggle(u),
+                            onRemove: () => setState(() => _dismissed.add(u.id)),
+                          );
+                        },
                       ),
           ),
         ],
@@ -244,11 +250,13 @@ class _SuggestedUserTile extends StatelessWidget {
     required this.isFollowed,
     required this.isLoading,
     required this.onToggle,
+    this.onRemove,
   });
   final UserSearchResult user;
   final bool isFollowed;
   final bool isLoading;
   final VoidCallback onToggle;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -309,6 +317,21 @@ class _SuggestedUserTile extends StatelessWidget {
                           fontSize: 12, fontWeight: FontWeight.w700)),
                 ),
               ),
+        if (onRemove != null) ...[
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: onRemove,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close, size: 16, color: Colors.black54),
+            ),
+          ),
+        ],
       ]),
     );
   }

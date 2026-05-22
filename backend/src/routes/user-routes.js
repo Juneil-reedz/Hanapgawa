@@ -74,7 +74,7 @@ router.delete(
   }),
 );
 
-// GET /users/me/photos — get current user's photo library
+// GET /users/me/photos — get current user's photo library (own uploads + post media + profile/cover)
 router.get(
   '/me/photos',
   authenticate,
@@ -83,8 +83,21 @@ router.get(
     if (!pool) return res.json({ photos: [] });
 
     const result = await pool.query(
-      `SELECT id, image, caption, created_at AS "createdAt"
-       FROM user_photos WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT id::text, image, NULL AS video, caption, created_at AS "createdAt", 'photo' AS source
+       FROM user_photos WHERE user_id = $1 AND image IS NOT NULL
+       UNION ALL
+       SELECT id::text, image, NULL AS video, SUBSTRING(body, 1, 120) AS caption, created_at AS "createdAt", 'post' AS source
+       FROM social_posts WHERE user_id = $1 AND image IS NOT NULL AND privacy = 'Public' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+       UNION ALL
+       SELECT id::text, NULL AS image, video, SUBSTRING(body, 1, 120) AS caption, created_at AS "createdAt", 'post_video' AS source
+       FROM social_posts WHERE user_id = $1 AND video IS NOT NULL AND privacy = 'Public' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+       UNION ALL
+       SELECT 'profile_pic'::text AS id, profile_pic AS image, NULL AS video, 'Profile Photo' AS caption, updated_at AS "createdAt", 'profile_pic' AS source
+       FROM user_profiles WHERE user_id = $1 AND profile_pic IS NOT NULL
+       UNION ALL
+       SELECT 'cover_pic'::text AS id, cover_pic AS image, NULL AS video, 'Cover Photo' AS caption, updated_at AS "createdAt", 'cover_pic' AS source
+       FROM user_profiles WHERE user_id = $1 AND cover_pic IS NOT NULL
+       ORDER BY "createdAt" DESC`,
       [req.auth.sub],
     );
     res.json({ photos: result.rows });
@@ -388,7 +401,7 @@ router.get(
   }),
 );
 
-// GET /users/:userId/photos — public photo library
+// GET /users/:userId/photos — public photo library (uploads + post media + profile/cover)
 router.get(
   '/:userId/photos',
   asyncHandler(async (req, res) => {
@@ -399,8 +412,21 @@ router.get(
     if (!pool) return res.json({ photos: [] });
 
     const result = await pool.query(
-      `SELECT id, image, caption, created_at AS "createdAt"
-       FROM user_photos WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT id::text, image, NULL AS video, caption, created_at AS "createdAt", 'photo' AS source
+       FROM user_photos WHERE user_id = $1 AND image IS NOT NULL
+       UNION ALL
+       SELECT id::text, image, NULL AS video, SUBSTRING(body, 1, 120) AS caption, created_at AS "createdAt", 'post' AS source
+       FROM social_posts WHERE user_id = $1 AND image IS NOT NULL AND privacy = 'Public' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+       UNION ALL
+       SELECT id::text, NULL AS image, video, SUBSTRING(body, 1, 120) AS caption, created_at AS "createdAt", 'post_video' AS source
+       FROM social_posts WHERE user_id = $1 AND video IS NOT NULL AND privacy = 'Public' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+       UNION ALL
+       SELECT 'profile_pic'::text AS id, profile_pic AS image, NULL AS video, 'Profile Photo' AS caption, updated_at AS "createdAt", 'profile_pic' AS source
+       FROM user_profiles WHERE user_id = $1 AND profile_pic IS NOT NULL
+       UNION ALL
+       SELECT 'cover_pic'::text AS id, cover_pic AS image, NULL AS video, 'Cover Photo' AS caption, updated_at AS "createdAt", 'cover_pic' AS source
+       FROM user_profiles WHERE user_id = $1 AND cover_pic IS NOT NULL
+       ORDER BY "createdAt" DESC`,
       [parsed.data],
     );
     res.json({ photos: result.rows });
