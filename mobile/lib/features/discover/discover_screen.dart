@@ -1191,6 +1191,8 @@ class _StoryViewerState extends State<_StoryViewer> {
   VideoPlayerController? _videoController;
   StreamSubscription<void>? _musicCompleteSub;
   var _musicRequestId = 0;
+  var _isFeatured = false;
+  var _featuringStory = false;
 
   List<StoryItem> get _stories => widget.storyGroups[_groupIndex];
   StoryItem get _story => _stories[_index];
@@ -1209,7 +1211,10 @@ class _StoryViewerState extends State<_StoryViewer> {
       if (mounted && _storyHasMusic) _playStoryMusic(refresh: true);
     });
     _markViewed();
-    if (_isOwner) _loadViewers();
+    if (_isOwner) {
+      _loadViewers();
+      _checkFeatured();
+    }
     _prefetchStoryMusic();
     _playStoryMusic();
     _initStoryVideo();
@@ -1664,6 +1669,47 @@ class _StoryViewerState extends State<_StoryViewer> {
     if (mounted) setState(() => _floatingReaction = null);
   }
 
+  Future<void> _checkFeatured() async {
+    try {
+      final myId = widget.api.storedUser?.id ?? '';
+      if (myId.isEmpty) return;
+      final list = await widget.api.getFeaturedStories(myId);
+      if (mounted) {
+        setState(() {
+          _isFeatured = list.any((f) => f['storyId'] == _story.id);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFeature() async {
+    if (_featuringStory) return;
+    setState(() => _featuringStory = true);
+    try {
+      if (_isFeatured) {
+        await widget.api.unfeatureStory(_story.id);
+        if (mounted) setState(() => _isFeatured = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Removed from Featured.')),
+          );
+        }
+      } else {
+        await widget.api.featureStory(_story.id);
+        if (mounted) setState(() => _isFeatured = true);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Added to Featured on your profile.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyError(e))));
+    } finally {
+      if (mounted) setState(() => _featuringStory = false);
+    }
+  }
+
   Future<void> _deleteCurrentStory() async {
     if (!_isOwner) return;
     final confirm = await showDialog<bool>(
@@ -1837,7 +1883,22 @@ class _StoryViewerState extends State<_StoryViewer> {
                 Text('${_index + 1}/$total',
                     style:
                         const TextStyle(color: Colors.white70, fontSize: 12)),
-              if (_isOwner)
+              if (_isOwner) ...[
+                GestureDetector(
+                  onTap: _featuringStory ? null : _toggleFeature,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: _featuringStory
+                        ? const SizedBox(
+                            width: 20, height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Icon(
+                            _isFeatured ? Icons.star_rounded : Icons.star_outline_rounded,
+                            color: _isFeatured ? const Color(0xFFFFC107) : Colors.white,
+                            size: 26,
+                          ),
+                  ),
+                ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_horiz, color: Colors.white),
                   color: Colors.white,
@@ -1855,6 +1916,7 @@ class _StoryViewerState extends State<_StoryViewer> {
                     ),
                   ],
                 ),
+              ],
             ]),
           ),
           if (_ownerTransition != null)

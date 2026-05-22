@@ -887,6 +887,20 @@ class MarketplaceApi {
   Future<void> reactToStory(String storyId, String reaction) async =>
       _post('/stories/$storyId/react', {'reaction': reaction}, auth: true);
 
+  Future<void> featureStory(String storyId) async =>
+      _post('/stories/$storyId/feature', {}, auth: true);
+
+  Future<void> unfeatureStory(String storyId) async =>
+      _deleteVoid('/stories/$storyId/feature', auth: true);
+
+  Future<void> deleteFeaturedStory(String featuredId) async =>
+      _deleteVoid('/stories/featured/$featuredId', auth: true);
+
+  Future<List<Map<String, dynamic>>> getFeaturedStories(String userId) async {
+    final json = await _get('/stories/featured/$userId');
+    return listOf(json['featuredStories'], (m) => m);
+  }
+
   // HTTP helpers
 
   Future<Map<String, dynamic>> _get(

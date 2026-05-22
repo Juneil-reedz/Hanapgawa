@@ -520,6 +520,23 @@ async function ensurePostgresSchema() {
   await client.query(`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS relationship_status TEXT NOT NULL DEFAULT ''`);
   await client.query(`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS featured JSONB NOT NULL DEFAULT '[]'::jsonb`);
 
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS featured_stories (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      story_id UUID,
+      body TEXT NOT NULL DEFAULT '',
+      image TEXT,
+      video TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      full_name TEXT NOT NULL DEFAULT '',
+      profile_pic TEXT,
+      original_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      featured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, story_id)
+    )
+  `);
+
   // Partitioned by created_at — nothing references notifications.id as a foreign key.
   await client.query(`
     CREATE TABLE IF NOT EXISTS notifications (

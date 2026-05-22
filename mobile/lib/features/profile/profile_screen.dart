@@ -76,6 +76,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   var _uploadingCover = false;
   var _uploadingPhoto = false;
 
+  var _featuredStories = <Map<String, dynamic>>[];
+
   // Visitor-mode state
   UserProfile? _visitedUserProfile;
   var _isFollowing = false;
@@ -183,6 +185,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             widget.api.getUserReviews(myId)
           else
             Future.value(<ReviewItem>[]),
+          if (myId.isNotEmpty)
+            widget.api.getFeaturedStories(myId)
+          else
+            Future.value(<Map<String, dynamic>>[]),
         ]);
         if (mounted) {
           final allJobs = results[4] as List<JobPost>;
@@ -192,6 +198,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final photos = results[3] as List<ProfilePhoto>;
           final jobPosts = allJobs.where((j) => j.clientUserId == myId).toList();
           final reviews = results[5] as List<ReviewItem>;
+          final featuredStories = results[6] as List<Map<String, dynamic>>;
           setState(() {
             _profileData = profileData;
             _bookingCount = bookings.length;
@@ -199,6 +206,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _photos = photos;
             _myJobPosts = jobPosts;
             _reviews = reviews;
+            _featuredStories = featuredStories;
             _loading = false;
             _refreshing = false;
           });
@@ -232,6 +240,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           widget.api.getUserSocialPosts(widget.viewingUserId!),
           widget.api.getUserPhotosPublic(widget.viewingUserId!),
           widget.api.getUserReviews(widget.viewingUserId!),
+          widget.api.getFeaturedStories(widget.viewingUserId!),
         ]);
         bool isFollowing = false;
         if (widget.api.token.isNotEmpty && !_isViewingAsAdmin) {
@@ -246,6 +255,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _posts = results[2] as List<SocialPost>;
             _photos = results[3] as List<ProfilePhoto>;
             _reviews = results[4] as List<ReviewItem>;
+            _featuredStories = results[5] as List<Map<String, dynamic>>;
             _isFollowing = isFollowing;
             _loading = false;
             _refreshing = false;
@@ -1301,49 +1311,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         style: const TextStyle(color: appMuted, fontSize: 13),
                       ),
                     const SizedBox(height: 16),
-                    // Stats row
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        StatCard(
-                            label: 'Posts', value: _posts.length.toString()),
-                        const SizedBox(width: 8),
-                        StatCard(
-                            label: 'Photos', value: _photos.length.toString()),
-                        const SizedBox(width: 8),
-                        if (_isOwnProfile)
-                          StatCard(
-                              label: 'Job Posts',
-                              value: _myJobPosts.length.toString())
-                        else
-                          StatCard(
-                              label: 'Followers',
-                              value: _followerCount.toString()),
-                      ],
-                    ),
-                    if (_isOwnProfile) ...[
-                      const SizedBox(height: 8),
-                      Row(
+                    // Stats — single scrollable row
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          GestureDetector(
-                            onTap: () => _showFollowList(followers: true),
-                            child: StatCard(
-                              label: 'Followers',
-                              value: (_profileData?.followerCount ?? 0).toString(),
-                            ),
-                          ),
+                          StatCard(label: 'Posts', value: _posts.length.toString()),
                           const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () => _showFollowList(followers: false),
-                            child: StatCard(
-                              label: 'Following',
-                              value: (_profileData?.followingCount ?? 0).toString(),
+                          StatCard(label: 'Photos', value: _photos.length.toString()),
+                          const SizedBox(width: 8),
+                          if (_isOwnProfile) ...[
+                            StatCard(label: 'Job Posts', value: _myJobPosts.length.toString()),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () => _showFollowList(followers: true),
+                              child: StatCard(
+                                label: 'Followers',
+                                value: (_profileData?.followerCount ?? 0).toString(),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () => _showFollowList(followers: false),
+                              child: StatCard(
+                                label: 'Following',
+                                value: (_profileData?.followingCount ?? 0).toString(),
+                              ),
+                            ),
+                          ] else ...[
+                            StatCard(label: 'Followers', value: _followerCount.toString()),
+                          ],
                         ],
                       ),
-                    ],
+                    ),
                     const SizedBox(height: 14),
                     // Action buttons
                     if (_isOwnProfile) ...[
@@ -1444,6 +1445,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     _buildAboutCard(context),
                     const SizedBox(height: 12),
                     _buildFeaturedSection(context),
+                    const SizedBox(height: 12),
+                    _buildFeaturedStoriesSection(context),
                     const SizedBox(height: 12),
                     _buildStatsCard(context),
                     const SizedBox(height: 12),
@@ -1870,6 +1873,101 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     avatar: const Icon(Icons.star_outline, size: 16),
                     label: Text(item)))
                 .toList(),
+          ),
+      ]),
+    );
+  }
+
+  Widget _buildFeaturedStoriesSection(BuildContext context) {
+    if (_featuredStories.isEmpty) return const SizedBox.shrink();
+    return AppCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 20),
+          const SizedBox(width: 6),
+          Text('Featured Stories',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w900)),
+        ]),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 120,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _featuredStories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (ctx, i) {
+              final fs = _featuredStories[i];
+              final image = fs['image']?.toString();
+              final body = fs['body']?.toString() ?? '';
+              final fsId = fs['id']?.toString() ?? '';
+              return GestureDetector(
+                onLongPress: _isOwnProfile
+                    ? () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text('Remove from Featured?'),
+                            content: const Text('This story will be removed from your profile. It won\'t be deleted.'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+                            ],
+                          ),
+                        );
+                        if (ok != true || !mounted) return;
+                        try {
+                          await widget.api.deleteFeaturedStory(fsId);
+                          setState(() => _featuredStories = _featuredStories.where((f) => f['id'] != fsId).toList());
+                        } catch (e) {
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyError(e))));
+                        }
+                      }
+                    : null,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Stack(children: [
+                    Container(
+                      width: 80,
+                      height: 120,
+                      color: appPrimary,
+                      child: image != null && image.isNotEmpty
+                          ? Image.network(image, fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                          : body.isNotEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.all(6),
+                                  child: Text(body,
+                                      maxLines: 5,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white, fontSize: 10)))
+                              : const Icon(Icons.movie_outlined, color: Colors.white, size: 28),
+                    ),
+                    if (_isOwnProfile)
+                      Positioned(
+                        top: 4, right: 4,
+                        child: Container(
+                          width: 18, height: 18,
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: const Icon(Icons.star_rounded, size: 12, color: Color(0xFFFFC107)),
+                        ),
+                      ),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+        if (_isOwnProfile)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Long-press a story to remove it from Featured.',
+                style: const TextStyle(color: appMuted, fontSize: 11)),
           ),
       ]),
     );

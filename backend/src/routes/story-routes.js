@@ -156,6 +156,61 @@ router.get('/:storyId/viewers', authenticate, asyncHandler(async (req, res) => {
   res.json({ viewers: result.rows });
 }));
 
+router.post('/:storyId/feature', authenticate, asyncHandler(async (req, res) => {
+  const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'Database unavailable.');
+  const story = await pool.query(
+    `SELECT id, user_id, full_name, profile_pic, body, image, video, metadata, created_at
+     FROM stories WHERE id = $1`,
+    [req.params.storyId],
+  );
+  if (!story.rows[0]) throw new HttpError(404, 'Story not found.');
+  if (story.rows[0].user_id !== req.auth.sub) throw new HttpError(403, 'Only the story owner can feature this story.');
+  const s = story.rows[0];
+  await pool.query(
+    `INSERT INTO featured_stories (user_id, story_id, body, image, video, metadata, full_name, profile_pic, original_created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (user_id, story_id) DO NOTHING`,
+    [req.auth.sub, s.id, s.body, s.image, s.video, JSON.stringify(s.metadata), s.full_name, s.profile_pic, s.created_at],
+  );
+  res.json({ featured: true });
+}));
+
+router.delete('/:storyId/feature', authenticate, asyncHandler(async (req, res) => {
+  const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'Database unavailable.');
+  await pool.query(
+    `DELETE FROM featured_stories WHERE story_id = $1 AND user_id = $2`,
+    [req.params.storyId, req.auth.sub],
+  );
+  res.json({ unfeatured: true });
+}));
+
+router.delete('/featured/:featuredId', authenticate, asyncHandler(async (req, res) => {
+  const pool = getPostgresPool();
+  if (!pool) throw new HttpError(503, 'Database unavailable.');
+  const result = await pool.query(
+    `DELETE FROM featured_stories WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [req.params.featuredId, req.auth.sub],
+  );
+  if (!result.rows.length) throw new HttpError(404, 'Featured story not found or not yours.');
+  res.json({ deleted: true });
+}));
+
+router.get('/featured/:userId', asyncHandler(async (req, res) => {
+  const pool = getPostgresPool();
+  if (!pool) return res.json({ featuredStories: [] });
+  const result = await pool.query(
+    `SELECT id, user_id AS "userId", story_id AS "storyId", body, image, video, metadata,
+            full_name AS "fullName", profile_pic AS "profilePic",
+            original_created_at AS "originalCreatedAt", featured_at AS "featuredAt"
+     FROM featured_stories WHERE user_id = $1
+     ORDER BY featured_at DESC`,
+    [req.params.userId],
+  );
+  res.json({ featuredStories: result.rows });
+}));
+
 router.post('/:storyId/react', authenticate, asyncHandler(async (req, res) => {
   const reaction = (req.body.reaction || '').toString().trim();
   if (!reaction) throw new HttpError(400, 'Reaction is required.');
