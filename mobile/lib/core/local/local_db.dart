@@ -567,10 +567,16 @@ class LocalDb {
 
   Future<Map<String, dynamic>?> getCachedOwnProfile(String userId) async {
     final d = await db;
-    final rows = await d.query('cached_own_profile',
-        where: 'user_id = ?', whereArgs: [userId]);
-    if (rows.isEmpty) return null;
-    return jsonDecode(rows.first['data_json'] as String) as Map<String, dynamic>;
+    try {
+      final rows = await d.query('cached_own_profile',
+          where: 'user_id = ?', whereArgs: [userId]);
+      if (rows.isEmpty) return null;
+      return jsonDecode(rows.first['data_json'] as String) as Map<String, dynamic>;
+    } catch (_) {
+      // Row too large (CursorWindow overflow from old base64 blobs) — purge it.
+      await d.delete('cached_own_profile', where: 'user_id = ?', whereArgs: [userId]);
+      return null;
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

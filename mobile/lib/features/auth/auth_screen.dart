@@ -207,7 +207,23 @@ class _AuthScreenState extends State<AuthScreen> {
         _setMessage('Google Sign-In did not return a credential.', true);
         return;
       }
-      await widget.onAuthenticated(await widget.api.signInWithGoogle(idToken));
+      final json = await widget.api.signInWithGoogleRaw(idToken);
+      if (json['emailVerificationRequired'] == true) {
+        // New or unverified user: show verification screen
+        final email = json['email']?.toString() ?? '';
+        final devCode = json['devVerificationCode']?.toString();
+        setState(() {
+          _mode = AuthMode.verify;
+          _email.text = email;
+          _loading = false;
+          _messageIsError = false;
+          _message = devCode == null
+              ? 'Account created. A verification code was sent to $email.'
+              : 'Account created. Dev code: $devCode';
+        });
+      } else {
+        await widget.onAuthenticated(AuthResponse.fromJson(json));
+      }
     } catch (error) {
       _setMessage(error.toString(), true);
     } finally {

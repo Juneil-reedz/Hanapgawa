@@ -32,12 +32,14 @@ class ProfileScreen extends StatefulWidget {
     this.onLogout,
     this.viewingUserId,
     this.preloadedName,
+    this.refreshKey = 0,
   });
   final MarketplaceApi api;
   final VoidCallback? openDashboard;
   final Future<void> Function()? onLogout;
   final String? viewingUserId;
   final String? preloadedName;
+  final int refreshKey;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -122,6 +124,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(ProfileScreen old) {
+    super.didUpdateWidget(old);
+    if (old.refreshKey != widget.refreshKey) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
     if (_isAdmin) return;
 
@@ -192,12 +202,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _loading = false;
             _refreshing = false;
           });
-          // Cache for next offline load
+          // Cache for next offline load — strip large base64 image blobs to
+          // avoid SQLite CursorWindow overflow (~2 MB limit).
+          final profileJson = profileData.toJson()
+            ..remove('profilePic')
+            ..remove('coverPic');
           unawaited(LocalDb.instance.cacheOwnProfile(myId, {
-            'profileData': profileData.toJson(),
+            'profileData': profileJson,
             'bookingCount': bookings.length,
-            'posts': posts.map((p) => p.toJson()).toList(),
-            'photos': photos.map((p) => p.toJson()).toList(),
+            'posts': posts.map((p) {
+              final m = p.toJson();
+              m.remove('profilePic'); // base64 — shown fresh from network
+              m.remove('image');      // Cloudinary URL is fine but skip to be safe with large payloads
+              return m;
+            }).toList(),
+            'photos': photos.map((p) => {
+              'id': p.id,
+              'caption': p.caption,
+              'createdAt': p.createdAt.toIso8601String(),
+            }).toList(),
             'jobPosts': jobPosts.map((j) => j.toJson()).toList(),
             'reviews': reviews.map((r) => r.toJson()).toList(),
           }));
@@ -333,6 +356,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
             .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
+  }
+
+  void _showFollowList({required bool followers}) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _FollowListSheet(
+        api: widget.api,
+        title: followers ? 'Followers' : 'Following',
+        fetch: followers ? widget.api.getMyFollowers : widget.api.getMyFollowing,
+      ),
+    );
   }
 
   Future<void> _pickAndUploadPhoto() async {
@@ -1042,8 +1079,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 await _load();
                               }
                             } catch (e) {
-                              if (ctx.mounted)
+                              if (ctx.mounted) {
                                 setSheetState(() => saving = false);
+                              }
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -1283,6 +1321,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               value: _followerCount.toString()),
                       ],
                     ),
+                    if (_isOwnProfile) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          GestureDetector(
+                            onTap: () => _showFollowList(followers: true),
+                            child: StatCard(
+                              label: 'Followers',
+                              value: (_profileData?.followerCount ?? 0).toString(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _showFollowList(followers: false),
+                            child: StatCard(
+                              label: 'Following',
+                              value: (_profileData?.followingCount ?? 0).toString(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 14),
                     // Action buttons
                     if (_isOwnProfile) ...[
@@ -2088,4 +2149,156 @@ class _PostCard extends StatelessWidget {
         api: api,
         reload: reload,
       );
+}
+
+class _FollowListSheet extends StatefulWidget {
+  const _FollowListSheet({
+    required this.api,
+    required this.title,
+    required this.fetch,
+  });
+  final MarketplaceApi api;
+  final String title;
+  final Future<List<UserSearchResult>> Function() fetch;
+
+  @override
+  State<_FollowListSheet> createState() => _FollowListSheetState();
+}
+
+class _FollowListSheetState extends State<_FollowListSheet> {
+  List<UserSearchResult> _users = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.fetch().then((users) {
+      if (mounted) setState(() { _users = users; _loading = false; });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, scroll) => Column(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 12),
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: Row(children: [
+              Icon(widget.title == 'Followers'
+                  ? Icons.people_outline
+                  : Icons.person_outline, color: appPrimary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(widget.title,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w800)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ]),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _users.isEmpty
+                    ? Center(
+                        child: Text(
+                          widget.title == 'Followers'
+                              ? 'No followers yet.'
+                              : 'Not following anyone yet.',
+                          style: const TextStyle(color: appMuted),
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: scroll,
+                        itemCount: _users.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final u = _users[i];
+                          return ListTile(
+                            leading: _UserAvatar(u),
+                            title: Text(u.fullName,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 15)),
+                            subtitle: Text(
+                              _subtitle(u),
+                              style: const TextStyle(
+                                  color: appMuted, fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => ProfileScreen(
+                                    api: widget.api,
+                                    viewingUserId: u.id,
+                                    preloadedName: u.fullName,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _subtitle(UserSearchResult u) {
+    final parts = <String>[];
+    if (u.role != 'client') {
+      parts.add(u.role[0].toUpperCase() + u.role.substring(1));
+    }
+    if (u.followers > 0) parts.add('${u.followers} followers');
+    return parts.isEmpty ? 'HanapGawa user' : parts.join(' · ');
+  }
+}
+
+class _UserAvatar extends StatelessWidget {
+  const _UserAvatar(this.user);
+  final UserSearchResult user;
+
+  @override
+  Widget build(BuildContext context) {
+    final pic = user.profilePic;
+    final initials = () {
+      final parts = user.fullName.trim().split(' ');
+      if (parts.length >= 2) return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+      return parts.first.isEmpty ? '?' : parts.first[0].toUpperCase();
+    }();
+    return CircleAvatar(
+      radius: 22,
+      backgroundColor: appPrimary,
+      backgroundImage: pic != null && pic.isNotEmpty
+          ? MemoryImage(base64Decode(pic))
+          : null,
+      child: pic == null || pic.isEmpty
+          ? Text(initials,
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w700))
+          : null,
+    );
+  }
 }

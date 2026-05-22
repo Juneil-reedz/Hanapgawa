@@ -1266,25 +1266,25 @@ class _StoryViewerState extends State<_StoryViewer> {
     try {
       await _player.setVolume(1.0);
       await _player.setReleaseMode(ReleaseMode.loop);
-    } catch (_) {
-      return false;
-    }
+    } catch (_) {}
     for (final url in urls) {
       if (requestId != _musicRequestId) return false;
-      try {
-        await _player.stop();
-        await _player.play(await _storyMusicSource(url));
-        return true;
-      } catch (_) {}
+      // Build candidate sources: cached file first, then URL stream as fallback.
+      final sources = <Source>[UrlSource(url)];
+      final cached = await _cachedStoryMusicFile(url, download: false);
+      if (cached != null) sources.insert(0, DeviceFileSource(cached.path));
+      // Also kick off background download so future visits use the file.
+      if (cached == null) unawaited(_cachedStoryMusicFile(url, download: true));
+      for (final source in sources) {
+        if (requestId != _musicRequestId) return false;
+        try {
+          await _player.stop();
+          await _player.play(source);
+          return true;
+        } catch (_) {}
+      }
     }
     return false;
-  }
-
-  Future<Source> _storyMusicSource(String url) async {
-    final file = await _cachedStoryMusicFile(url, download: false);
-    if (file != null) return DeviceFileSource(file.path);
-    unawaited(_cachedStoryMusicFile(url, download: true));
-    return UrlSource(url);
   }
 
   Future<File?> _cachedStoryMusicFile(String url,
@@ -3993,11 +3993,6 @@ class _PostComposeSheetState extends State<_PostComposeSheet> {
                             label: 'GIF',
                             active: _gif != null,
                             onTap: _setGif),
-                        _ComposeChip(
-                            icon: Icons.music_note_outlined,
-                            label: 'Music',
-                            active: _music != null,
-                            onTap: _setMusic),
                         _ComposeChip(
                             icon: Icons.sticky_note_2_outlined,
                             label: 'Stickers',

@@ -30,10 +30,14 @@ class _SuggestedUsersOnboardingState extends State<SuggestedUsersOnboarding> {
   }
 
   Future<void> _load() async {
-    final users = await widget.api.getSuggestedUsers(limit: 20);
+    final suggested = widget.api.getSuggestedUsers(limit: 20);
+    final following = widget.api.getMyFollowing();
+    final users = await suggested;
+    final followingList = await following;
     if (!mounted) return;
     setState(() {
       _users = users;
+      _followed.addAll(followingList.map((u) => u.id));
       _loading = false;
     });
   }
@@ -146,10 +150,14 @@ class _SuggestedUsersSheetState extends State<SuggestedUsersSheet> {
   }
 
   Future<void> _load() async {
-    final users = await widget.api.getSuggestedUsers(limit: 20);
+    final suggested = widget.api.getSuggestedUsers(limit: 20);
+    final following = widget.api.getMyFollowing();
+    final users = await suggested;
+    final followingList = await following;
     if (!mounted) return;
     setState(() {
       _users = users;
+      _followed.addAll(followingList.map((u) => u.id));
       _loading = false;
     });
   }

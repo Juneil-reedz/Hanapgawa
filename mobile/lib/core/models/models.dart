@@ -184,7 +184,7 @@ class FeedItem {
         likeCount: asInt(json['likeCount']),
         commentCount: asInt(json['commentCount']),
         isLiked: json['isLiked'] == true,
-        isFollowingAuthor: json['isFollowingAuthor'] != false,
+        isFollowingAuthor: json['isFollowingAuthor'] == true,
       );
 }
 
@@ -454,6 +454,8 @@ class UserProfileData {
     this.featured = const [],
     this.profilePic,
     this.coverPic,
+    this.followerCount = 0,
+    this.followingCount = 0,
   });
   final String? bio;
   final String? address;
@@ -466,6 +468,8 @@ class UserProfileData {
   final List<String> featured;
   final String? profilePic;
   final String? coverPic;
+  final int followerCount;
+  final int followingCount;
 
   factory UserProfileData.fromJson(Map<String, dynamic> json) {
     final profile = asMap(json['profileData'] ?? json);
@@ -485,6 +489,8 @@ class UserProfileData {
           : const [],
       profilePic: profile['profilePic']?.toString(),
       coverPic: profile['coverPic']?.toString(),
+      followerCount: asInt(json['followerCount']),
+      followingCount: asInt(json['followingCount']),
     );
   }
 
@@ -500,6 +506,8 @@ class UserProfileData {
         'featured': featured,
         if (profilePic != null) 'profilePic': profilePic,
         if (coverPic != null) 'coverPic': coverPic,
+        'followerCount': followerCount,
+        'followingCount': followingCount,
       };
 }
 

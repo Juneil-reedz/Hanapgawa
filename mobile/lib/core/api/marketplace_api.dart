@@ -48,6 +48,9 @@ class MarketplaceApi {
   Future<AuthResponse> signInWithGoogle(String idToken) async =>
       AuthResponse.fromJson(await _post('/auth/google', {'idToken': idToken}));
 
+  Future<Map<String, dynamic>> signInWithGoogleRaw(String idToken) async =>
+      _post('/auth/google', {'idToken': idToken});
+
   Future<AuthResponse> login(String email, String password) async =>
       AuthResponse.fromJson(
           await _post('/auth/login', {'email': email, 'password': password}));
@@ -106,6 +109,24 @@ class MarketplaceApi {
   Future<List<UserSearchResult>> getSuggestedUsers({int limit = 20}) async {
     try {
       final json = await _get('/users/suggested', auth: true, query: {'limit': '$limit'});
+      return listOf(json['users'], UserSearchResult.fromJson);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<List<UserSearchResult>> getMyFollowers() async {
+    try {
+      final json = await _get('/users/me/followers', auth: true);
+      return listOf(json['users'], UserSearchResult.fromJson);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<List<UserSearchResult>> getMyFollowing() async {
+    try {
+      final json = await _get('/users/me/following', auth: true);
       return listOf(json['users'], UserSearchResult.fromJson);
     } catch (_) {
       return [];
