@@ -33,6 +33,47 @@ router.get(
   }),
 );
 
+// PUT /users/me/device-token — register/update FCM device token for push notifications
+router.put(
+  '/me/device-token',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { token, platform = 'android' } = req.body;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'token is required' });
+    }
+    const pool = getPostgresPool();
+    if (!pool) return res.json({ ok: true });
+    await pool.query(
+      `INSERT INTO user_device_tokens (user_id, token, platform, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, token) DO UPDATE SET platform = $3, updated_at = NOW()`,
+      [req.auth.sub, token, platform],
+    );
+    res.json({ ok: true });
+  }),
+);
+
+// DELETE /users/me/device-token — unregister FCM token on logout
+router.delete(
+  '/me/device-token',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { token } = req.body;
+    const pool = getPostgresPool();
+    if (!pool) return res.json({ ok: true });
+    if (token) {
+      await pool.query(
+        `DELETE FROM user_device_tokens WHERE user_id = $1 AND token = $2`,
+        [req.auth.sub, token],
+      );
+    } else {
+      await pool.query(`DELETE FROM user_device_tokens WHERE user_id = $1`, [req.auth.sub]);
+    }
+    res.json({ ok: true });
+  }),
+);
+
 // GET /users/me/photos — get current user's photo library
 router.get(
   '/me/photos',
@@ -284,6 +325,46 @@ router.get(
       [parsed.data],
     );
     res.json({ photos: result.rows });
+  }),
+);
+
+// GET /users/suggested — suggested accounts to follow (must come before /:userId)
+router.get(
+  '/suggested',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const pool = getPostgresPool();
+    if (!pool) return res.json({ users: [] });
+
+    const userId = req.auth.sub;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name AS "fullName", u.role,
+              up.profile_pic AS "profilePic", up.bio,
+              COALESCE(fc.followers, 0)::int AS followers,
+              COALESCE(pc.posts, 0)::int AS posts
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       LEFT JOIN (
+         SELECT following_user_id, COUNT(*)::int AS followers
+         FROM follows GROUP BY following_user_id
+       ) fc ON fc.following_user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, COUNT(*)::int AS posts
+         FROM social_posts GROUP BY user_id
+       ) pc ON pc.user_id = u.id
+       WHERE u.email_verified_at IS NOT NULL
+         AND u.id != $1
+         AND u.id NOT IN (
+           SELECT following_user_id FROM follows WHERE follower_user_id = $1
+         )
+       ORDER BY (COALESCE(fc.followers, 0) + COALESCE(pc.posts, 0) * 2) DESC
+       LIMIT $2`,
+      [userId, limit],
+    );
+
+    res.json({ users: result.rows });
   }),
 );
 

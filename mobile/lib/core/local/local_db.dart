@@ -19,15 +19,17 @@ class LocalDb {
     final path = join(await getDatabasesPath(), 'hanapgawa_v1.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (d, _) async {
         await _createV1Tables(d);
         await _createV2Tables(d);
         await _createV3Tables(d);
+        await _createV4Tables(d);
       },
       onUpgrade: (d, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createV2Tables(d);
         if (oldVersion < 3) await _createV3Tables(d);
+        if (oldVersion < 4) await _createV4Tables(d);
       },
     );
   }
@@ -132,6 +134,16 @@ class LocalDb {
       CREATE TABLE IF NOT EXISTS kv_store (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createV4Tables(Database d) async {
+    await d.execute('''
+      CREATE TABLE IF NOT EXISTS cached_own_profile (
+        user_id TEXT PRIMARY KEY,
+        data_json TEXT NOT NULL,
+        cached_at INTEGER NOT NULL
       )
     ''');
   }
@@ -536,6 +548,29 @@ class LocalDb {
     final rows = await d.query('cached_admin_data', where: 'key = ?', whereArgs: [key]);
     if (rows.isEmpty) return null;
     return jsonDecode(rows.first['data_json'] as String);
+  }
+
+  // ── Own profile ────────────────────────────────────────────────────────────
+
+  Future<void> cacheOwnProfile(String userId, Map<String, dynamic> data) async {
+    final d = await db;
+    await d.insert(
+      'cached_own_profile',
+      {
+        'user_id': userId,
+        'data_json': jsonEncode(data),
+        'cached_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, dynamic>?> getCachedOwnProfile(String userId) async {
+    final d = await db;
+    final rows = await d.query('cached_own_profile',
+        where: 'user_id = ?', whereArgs: [userId]);
+    if (rows.isEmpty) return null;
+    return jsonDecode(rows.first['data_json'] as String) as Map<String, dynamic>;
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

@@ -5,7 +5,10 @@ const morgan = require('morgan');
 
 const { env } = require('./config/env');
 const { errorHandler } = require('./middleware/error-handler');
+const { initFirebase } = require('./lib/firebase');
 const { apiRoutes } = require('./routes');
+
+initFirebase();
 
 const app = express();
 

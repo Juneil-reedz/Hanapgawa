@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
@@ -34,6 +35,8 @@ class FeedCard extends StatefulWidget {
   final Future<void> Function() reload;
   final bool readOnly;
 
+  static Future<void> stopAllMusic() => _FeedCardState._stopAllMusic();
+
   @override
   State<FeedCard> createState() => _FeedCardState();
 }
@@ -41,8 +44,14 @@ class FeedCard extends StatefulWidget {
 class _FeedCardState extends State<FeedCard> {
   static _FeedCardState? _activeMusicCard;
 
+  static Future<void> _stopAllMusic() async {
+    await _activeMusicCard?._stopMusic();
+  }
+
   late bool _liked;
   late int _likeCount;
+  late bool _followingAuthor;
+  var _followingInProgress = false;
   AudioPlayer? _musicPlayer;
   List<String>? _searchedMusicUrls;
   ScrollPosition? _scrollPosition;
@@ -51,20 +60,97 @@ class _FeedCardState extends State<FeedCard> {
   var _isSaved = false;
   var _musicPlaying = false;
   var _videoPlayingInPost = false;
+  var _updatingMusic = false;
 
   @override
   void initState() {
     super.initState();
     _liked = widget.item.isLiked;
     _likeCount = widget.item.likeCount;
+    _followingAuthor = widget.item.isFollowingAuthor;
     LocalDb.instance.isFavorite(widget.item.id, widget.item.type).then((v) {
       if (mounted) setState(() => _isSaved = v);
     });
+    // Pre-cache music and video for instant playback
+    _preFetchMediaInBackground();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _attachScrollMonitor();
       _updateMusicPlayback();
     });
+  }
+
+  static int _activePrefetches = 0;
+  static const int _maxPrefetches = 2;
+
+  void _preFetchMediaInBackground() {
+    if (_activePrefetches >= _maxPrefetches) return;
+    _activePrefetches++;
+    Future(() async {
+      try {
+        for (final url in _savedMusicUrls) {
+          await _cacheFeedMusicFile(url, download: true);
+        }
+        final video = widget.item.socialPost?.video;
+        if (video != null &&
+            (video.startsWith('http://') || video.startsWith('https://'))) {
+          await _preFetchFeedVideo(video);
+        }
+      } finally {
+        _activePrefetches--;
+      }
+    });
+  }
+
+  static String _stableFeedKey(String url) {
+    var hash = 5381;
+    for (final unit in url.codeUnits) {
+      hash = ((hash << 5) + hash + unit) & 0x3fffffff;
+    }
+    return '${url.length}_$hash';
+  }
+
+  static Future<File?> _cacheFeedMusicFile(String url,
+      {required bool download}) async {
+    try {
+      final dir =
+          Directory('${(await getTemporaryDirectory()).path}/feed_music');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final file = File('${dir.path}/${_stableFeedKey(url)}.mp3');
+      if (await file.exists() && await file.length() > 0) return file;
+      if (!download || !SyncService.instance.isOnline) return null;
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _preFetchFeedVideo(String url) async {
+    if (!SyncService.instance.isOnline) return;
+    try {
+      final dir =
+          Directory('${(await getTemporaryDirectory()).path}/post_videos');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final transformed = _toCloudinaryMp4(url);
+      for (final u in [url, transformed]) {
+        final file = File('${dir.path}/${_stableFeedKey(u)}.mp4');
+        if (await file.exists() && await file.length() > 0) return;
+      }
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(Uri.parse(transformed));
+        final response = await request.close();
+        if (response.statusCode < 200 || response.statusCode >= 300) return;
+        final file =
+            File('${dir.path}/${_stableFeedKey(transformed)}.mp4');
+        await response.pipe(file.openWrite());
+      } finally {
+        client.close(force: true);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -123,12 +209,18 @@ class _FeedCardState extends State<FeedCard> {
   }
 
   Future<void> _updateMusicPlayback() async {
+    if (_updatingMusic) return;
     if (_savedMusicUrls.isEmpty && _musicTitle == null) return;
-    if (_videoPlayingInPost || !_isMostlyVisible) {
-      await _stopMusic();
-      return;
+    _updatingMusic = true;
+    try {
+      if (_videoPlayingInPost || !_isMostlyVisible) {
+        await _stopMusic();
+        return;
+      }
+      await _playMusic();
+    } finally {
+      _updatingMusic = false;
     }
-    await _playMusic();
   }
 
   Future<void> _playMusic() async {
@@ -151,7 +243,14 @@ class _FeedCardState extends State<FeedCard> {
     for (final url in urls) {
       try {
         await player.stop();
-        await player.play(UrlSource(url));
+        final cached = await _cacheFeedMusicFile(url, download: false);
+        if (cached != null) {
+          await player.play(DeviceFileSource(cached.path));
+        } else {
+          await player.play(UrlSource(url));
+          // Cache in background for next time
+          unawaited(_cacheFeedMusicFile(url, download: true));
+        }
         _activeMusicCard = this;
         _musicPlaying = true;
         return true;
@@ -1023,6 +1122,11 @@ class _FeedCardState extends State<FeedCard> {
     final badgeColor = job.postType == 'offering_service'
         ? const Color(0xFF1E88E5)
         : appPrimary;
+    final slotLabel =
+        job.postType == 'offering_service' ? 'clients' : 'workers';
+    final priceLabel = (job.budgetMin ?? 0) > 0
+        ? 'P${job.budgetMin}–P${job.budgetMax ?? job.budgetMin}'
+        : 'Price not set';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         Expanded(
@@ -1076,9 +1180,14 @@ class _FeedCardState extends State<FeedCard> {
             child:
                 _StatItem(icon: Icons.grid_view_outlined, label: job.category)),
         Expanded(
+            child: _StatItem(icon: Icons.payments_outlined, label: priceLabel)),
+        Expanded(
             child: _StatItem(
-                icon: Icons.payments_outlined,
-                label: 'P${job.budgetMin ?? 0}–P${job.budgetMax ?? 0}')),
+                icon: job.postType == 'offering_service'
+                    ? Icons.person_add_alt_outlined
+                    : Icons.groups_outlined,
+                label:
+                    '${job.acceptedOfferCount}/${job.workersNeeded} $slotLabel')),
         Expanded(
             child: _StatItem(
                 icon: Icons.mail_outline, label: '${job.offerCount} offers')),
@@ -1237,6 +1346,37 @@ class _FeedCardState extends State<FeedCard> {
             ]),
           ),
         ),
+        // Follow button — shown when not following the author
+        if (!_followingAuthor &&
+            !widget.readOnly &&
+            widget.api.token.isNotEmpty &&
+            widget.api.storedUser?.id != post.userId)
+          _followingInProgress
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : TextButton(
+                  onPressed: () async {
+                    setState(() => _followingInProgress = true);
+                    try {
+                      await widget.api.followUser(post.userId);
+                      if (mounted) setState(() => _followingAuthor = true);
+                    } finally {
+                      if (mounted) setState(() => _followingInProgress = false);
+                    }
+                  },
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: appPrimary,
+                  ),
+                  child: const Text('Follow',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 12)),
+                ),
         // CRUD / chevron — standalone, never inside a parent GestureDetector
         if (_canAdminManageSocialPost)
           Material(

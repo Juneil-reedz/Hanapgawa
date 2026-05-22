@@ -223,6 +223,20 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
 
       const result = await pool.query(socialQuery, params);
 
+      // Batch-check which authors the current user follows
+      const authorIds = [...new Set(result.rows.map((p) => p.userId))];
+      let followingAuthorIds = new Set();
+      if (userId && authorIds.length > 0) {
+        try {
+          const fr = await pool.query(
+            `SELECT following_user_id FROM follows
+             WHERE follower_user_id = $1 AND following_user_id = ANY($2)`,
+            [userId, authorIds],
+          );
+          followingAuthorIds = new Set(fr.rows.map((r) => r.following_user_id));
+        } catch { /* ignore */ }
+      }
+
       for (const post of result.rows) {
         items.push({
           type: 'post',
@@ -231,6 +245,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
           likeCount: 0,
           commentCount: 0,
           isLiked: false,
+          isFollowingAuthor: userId === post.userId || followingAuthorIds.has(post.userId),
           socialPost: post,
         });
       }

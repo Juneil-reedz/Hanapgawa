@@ -10,6 +10,7 @@ import '../../core/utils.dart';
 import '../../features/bookings/booking_card.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/empty_state.dart';
+import '../../shared/widgets/skeleton.dart';
 import '../../shared/widgets/info_pill.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../bookings/chat_screen.dart';
@@ -37,7 +38,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   var _reports = <ReportItem>[];
   var _categories = <ServiceCategory>[];
   var _isOffline = false;
-  var _loading = true;
+  var _loading = false;
+  var _refreshing = false;
   var _loadError = '';
   final _displayName = TextEditingController();
   final _category = TextEditingController();
@@ -80,14 +82,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
 
   Future<void> _load() async {
-    setState(() => _loading = true);
     _loadError = '';
     if (_isAdmin) {
       await _loadAdmin();
-      if (mounted) setState(() => _loading = false);
       return;
     }
 
+    // Cache first — show immediately if available
+    final cachedBookings = await LocalDb.instance.getCachedBookings();
+    final cachedJobs = await LocalDb.instance.getCachedJobs();
+    if (cachedBookings.isNotEmpty || cachedJobs.isNotEmpty) {
+      final allJobs = cachedJobs.map(JobPost.fromJson).toList();
+      final userId = widget.api.storedUser?.id;
+      if (mounted) setState(() {
+        _bookings = cachedBookings.map(Booking.fromJson).toList();
+        _myJobPosts = allJobs.where((j) => j.clientUserId == userId).toList();
+        _myJobOffers = _myJobPosts.map((j) => (job: j, offers: <JobOffer>[])).toList();
+        _loading = false;
+      });
+    } else {
+      if (mounted) setState(() => _loading = true);
+    }
+
+    if (mounted) setState(() => _refreshing = true);
     try {
       final results = await Future.wait([
         widget.api.getMyBookings(),
@@ -106,32 +123,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _myJobOffers.add((job: job, offers: []));
         }
       }
-      // Cache for offline use
-      unawaited(LocalDb.instance
-          .cacheBookings(_bookings.map((b) => b.toJson()).toList()));
-      unawaited(LocalDb.instance
-          .cacheJobs(allJobs.map((j) => j.toJson()).toList()));
+      unawaited(LocalDb.instance.cacheBookings(_bookings.map((b) => b.toJson()).toList()));
+      unawaited(LocalDb.instance.cacheJobs(allJobs.map((j) => j.toJson()).toList()));
     } catch (error) {
-      // Fall back to cached data
-      final cachedBookings = await LocalDb.instance.getCachedBookings();
-      final cachedJobs = await LocalDb.instance.getCachedJobs();
-      if (cachedBookings.isNotEmpty || cachedJobs.isNotEmpty) {
-        final allJobs = cachedJobs.map(JobPost.fromJson).toList();
-        final userId = widget.api.storedUser?.id;
-        _bookings = cachedBookings.map(Booking.fromJson).toList();
-        _myJobPosts =
-            allJobs.where((j) => j.clientUserId == userId).toList();
-        _myJobOffers = _myJobPosts.map((j) => (job: j, offers: <JobOffer>[])).toList();
-      } else {
-        _loadError = friendlyError(error);
-      }
+      if (_bookings.isEmpty) _loadError = friendlyError(error);
     }
-    if (mounted) setState(() => _loading = false);
+    if (mounted) setState(() { _loading = false; _refreshing = false; });
   }
 
   Future<void> _loadAdmin() async {
+    // Cache first — show immediately if available
+    final cached = await Future.wait([
+      LocalDb.instance.getCachedAdminData('summary'),
+      LocalDb.instance.getCachedAdminData('users'),
+      LocalDb.instance.getCachedAdminData('reports'),
+      LocalDb.instance.getCachedAdminData('categories'),
+      LocalDb.instance.getCachedBookings(),
+      LocalDb.instance.getCachedJobs(),
+    ]);
+    final hasCached = cached[0] != null || (cached[4] as List).isNotEmpty || (cached[5] as List).isNotEmpty;
+    if (hasCached && mounted) {
+      if (cached[0] != null) _adminSummary = AdminSummary.fromJson(Map<String, dynamic>.from(cached[0] as Map));
+      if (cached[1] != null) _adminUsers = (cached[1] as List).map((u) => SessionUser.fromJson(Map<String, dynamic>.from(u as Map))).toList();
+      if (cached[2] != null) _reports = (cached[2] as List).map((r) => ReportItem.fromJson(Map<String, dynamic>.from(r as Map))).toList();
+      if (cached[3] != null) _categories = (cached[3] as List).map((c) => ServiceCategory.fromJson(Map<String, dynamic>.from(c as Map))).toList();
+      _bookings = (cached[4] as List<Map<String, dynamic>>).map(Booking.fromJson).toList();
+      _myJobPosts = (cached[5] as List<Map<String, dynamic>>).map(JobPost.fromJson).toList();
+      setState(() => _loading = false);
+    } else {
+      if (mounted) setState(() => _loading = true);
+    }
+
+    if (mounted) setState(() => _refreshing = true);
     try {
-      // Fetch all admin data in parallel
       final results = await Future.wait([
         widget.api.getAdminSummary(),
         widget.api.getAdminUsers(),
@@ -147,7 +171,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _bookings = results[4] as List<Booking>;
       _myJobPosts = results[5] as List<JobPost>;
       _isOffline = false;
-      // Cache everything for offline use
       unawaited(LocalDb.instance.cacheAdminData('summary', _adminSummary.toJson()));
       unawaited(LocalDb.instance.cacheAdminData('users', _adminUsers.map((u) => u.toJson()).toList()));
       unawaited(LocalDb.instance.cacheAdminData('reports', _reports.map((r) => r.toJson()).toList()));
@@ -155,26 +178,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       unawaited(LocalDb.instance.cacheBookings(_bookings.map((b) => b.toJson()).toList()));
       unawaited(LocalDb.instance.cacheJobs(_myJobPosts.map((j) => j.toJson()).toList()));
     } catch (e) {
-      // Restore from cache
-      final cached = await Future.wait([
-        LocalDb.instance.getCachedAdminData('summary'),
-        LocalDb.instance.getCachedAdminData('users'),
-        LocalDb.instance.getCachedAdminData('reports'),
-        LocalDb.instance.getCachedAdminData('categories'),
-        LocalDb.instance.getCachedBookings(),
-        LocalDb.instance.getCachedJobs(),
-      ]);
-      _isOffline = true;
-      if (cached[0] != null) _adminSummary = AdminSummary.fromJson(Map<String, dynamic>.from(cached[0] as Map));
-      if (cached[1] != null) _adminUsers = (cached[1] as List).map((u) => SessionUser.fromJson(Map<String, dynamic>.from(u as Map))).toList();
-      if (cached[2] != null) _reports = (cached[2] as List).map((r) => ReportItem.fromJson(Map<String, dynamic>.from(r as Map))).toList();
-      if (cached[3] != null) _categories = (cached[3] as List).map((c) => ServiceCategory.fromJson(Map<String, dynamic>.from(c as Map))).toList();
-      _bookings = (cached[4] as List<Map<String, dynamic>>).map(Booking.fromJson).toList();
-      _myJobPosts = (cached[5] as List<Map<String, dynamic>>).map(JobPost.fromJson).toList();
-      if (cached.every((c) => c == null || (c is List && c.isEmpty))) {
+      if (_adminSummary == AdminSummary.empty() && _adminUsers.isEmpty) {
+        _isOffline = true;
         _loadError = friendlyError(e);
       }
     }
+    if (mounted) setState(() { _loading = false; _refreshing = false; });
   }
 
   Future<T> _safeLoad<T>(String label, Future<T> request, T fallback,
@@ -250,9 +259,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(_isAdmin ? 'Admin Dashboard' : 'Dashboard'),
         actions: const [],
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
+      body: Column(
+        children: [
+          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+          Expanded(child: RefreshIndicator(
+            onRefresh: _load,
+            child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
             if (!_isAdmin) ...[
@@ -267,11 +279,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 16),
             ],
-            if (_loading)
-              const Center(
-                  child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: CircularProgressIndicator())),
+            if (_loading) const SkeletonDashboard(),
             if (!_loading && _loadError.isNotEmpty) ...[
               AppCard(
                 child: Column(
@@ -379,6 +387,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ],
         ),
+      )),
+        ],
       ),
     );
   }

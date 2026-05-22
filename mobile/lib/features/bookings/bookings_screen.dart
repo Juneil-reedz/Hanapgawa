@@ -11,6 +11,7 @@ import '../../core/models/models.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/avatar.dart';
 import '../../shared/widgets/empty_state.dart';
+import '../../shared/widgets/skeleton.dart';
 import 'booking_card.dart';
 import 'chat_screen.dart';
 import 'conversation_tile.dart';
@@ -33,7 +34,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
   var _segment = 0;
   var _bookings = <Booking>[];
   var _conversations = <Conversation>[];
-  var _loading = true;
+  var _loading = false;
+  var _refreshing = false;
   var _message = '';
 
   // Selected person index for horizontal person selector (segments 0 & 1)
@@ -151,7 +153,28 @@ class _BookingsScreenState extends State<BookingsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 1. Show cached data immediately — no full-screen spinner if cache exists
+    if (_bookings.isEmpty && _conversations.isEmpty) {
+      final cachedBookings = await LocalDb.instance.getCachedBookings();
+      final cachedConvs = await LocalDb.instance.getCachedConversations();
+      if ((cachedBookings.isNotEmpty || cachedConvs.isNotEmpty) && mounted) {
+        final convs = cachedConvs.map(Conversation.fromJson).toList();
+        setState(() {
+          _bookings = cachedBookings.map(Booking.fromJson).toList();
+          _conversations = convs;
+          _message = '';
+          if (!_initialLoadDone) {
+            for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
+            _initialLoadDone = true;
+          }
+        });
+      } else if (mounted) {
+        setState(() => _loading = true);
+      }
+    }
+    if (mounted) setState(() => _refreshing = true);
+
+    // 2. Fetch fresh data in background
     try {
       final results = await Future.wait([
         widget.api.getMyBookings(),
@@ -160,7 +183,6 @@ class _BookingsScreenState extends State<BookingsScreen> {
       if (!mounted) return;
       final bookings = results[0] as List<Booking>;
       final convs = results[1] as List<Conversation>;
-      // Cache fresh results
       unawaited(LocalDb.instance
           .cacheBookings(bookings.map((b) => b.toJson()).toList()));
       unawaited(LocalDb.instance
@@ -172,41 +194,21 @@ class _BookingsScreenState extends State<BookingsScreen> {
         _activeGroupIndex = 0;
         _historyGroupIndex = 0;
         _loading = false;
+        _refreshing = false;
         if (!_initialLoadDone) {
-          for (final c in convs) {
-            _lastSeen[c.id] = c.updatedAt;
-          }
+          for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
           _initialLoadDone = true;
         }
       });
     } catch (error) {
       if (!mounted) return;
-      // Fall back to local cache
-      final cachedBookings = await LocalDb.instance.getCachedBookings();
-      final cachedConvs = await LocalDb.instance.getCachedConversations();
-      if (cachedBookings.isNotEmpty || cachedConvs.isNotEmpty) {
-        final convs = cachedConvs.map(Conversation.fromJson).toList();
-        setState(() {
-          _bookings = cachedBookings.map(Booking.fromJson).toList();
-          _conversations = convs;
-          _message = '';
-          _activeGroupIndex = 0;
-          _historyGroupIndex = 0;
-          _loading = false;
-          if (!_initialLoadDone) {
-            for (final c in convs) {
-              _lastSeen[c.id] = c.updatedAt;
-            }
-            _initialLoadDone = true;
-          }
-        });
-      } else {
-        setState(() {
+      setState(() {
+        _refreshing = false;
+        if (_bookings.isEmpty && _conversations.isEmpty) {
           _message = friendlyError(error);
-
-          _loading = false;
-        });
-      }
+        }
+        _loading = false;
+      });
     }
   }
 
@@ -625,7 +627,11 @@ class _BookingsScreenState extends State<BookingsScreen> {
               child: const Icon(Icons.edit_outlined),
             )
           : null,
-      body: RefreshIndicator(
+      body: Column(
+        children: [
+          if (_refreshing)
+            const LinearProgressIndicator(minHeight: 2),
+          Expanded(child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -681,11 +687,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
               ),
               const SizedBox(height: 12),
             ],
-            if (_loading)
-              const Center(
-                  child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: CircularProgressIndicator())),
+            if (_loading) const SkeletonBookingList(),
             if (!_loading && _message.isNotEmpty)
               EmptyState(
                   icon: Icons.cloud_off_outlined,
@@ -819,6 +821,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
                   subtitle: 'Tap the edit button to start a conversation.'),
           ],
         ),
+      )),
+        ],
       ),
     );
   }

@@ -56,7 +56,7 @@ class SyncService {
       const baseUrl = 'https://hanapgawa.onrender.com/api/v1';
       final response = await http
           .get(Uri.parse('$baseUrl/health'))
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode >= 500) return false;
       // Parse the JSON body — only consider truly online if postgres is healthy
       final body = jsonDecode(response.body) as Map<String, dynamic>;

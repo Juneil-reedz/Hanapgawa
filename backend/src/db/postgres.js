@@ -540,6 +540,26 @@ async function ensurePostgresSchema() {
 
   await client.query(`CREATE INDEX IF NOT EXISTS notifications_user_id_idx ON notifications (user_id, created_at DESC)`);
 
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS app_feedback (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      comment TEXT NOT NULL DEFAULT '',
+      app_version TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS user_device_tokens (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'android',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, token)
+    )
+  `);
+
   await _ensurePartitions(client);
 
   return { configured: true, initialized: true };

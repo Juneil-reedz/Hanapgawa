@@ -136,6 +136,7 @@ class FeedItem {
     this.likeCount = 0,
     this.commentCount = 0,
     this.isLiked = false,
+    this.isFollowingAuthor = true,
   });
   final String type;
   final String id;
@@ -147,6 +148,7 @@ class FeedItem {
   final int likeCount;
   final int commentCount;
   final bool isLiked;
+  final bool isFollowingAuthor;
 
   String get searchText => [
         listing?.title,
@@ -182,6 +184,7 @@ class FeedItem {
         likeCount: asInt(json['likeCount']),
         commentCount: asInt(json['commentCount']),
         isLiked: json['isLiked'] == true,
+        isFollowingAuthor: json['isFollowingAuthor'] != false,
       );
 }
 
@@ -249,11 +252,19 @@ class UserSearchResult {
     required this.fullName,
     required this.role,
     required this.status,
+    this.profilePic,
+    this.bio,
+    this.followers = 0,
+    this.posts = 0,
   });
   final String id;
   final String fullName;
   final String role;
   final String status;
+  final String? profilePic;
+  final String? bio;
+  final int followers;
+  final int posts;
 
   factory UserSearchResult.fromJson(Map<String, dynamic> json) =>
       UserSearchResult(
@@ -261,6 +272,10 @@ class UserSearchResult {
         fullName: json['fullName']?.toString() ?? 'User',
         role: json['role']?.toString() ?? 'client',
         status: json['status']?.toString() ?? '',
+        profilePic: json['profilePic']?.toString(),
+        bio: json['bio']?.toString(),
+        followers: asInt(json['followers']),
+        posts: asInt(json['posts']),
       );
 
   String get initials {
@@ -417,6 +432,13 @@ class ProfilePhoto {
         caption: json['caption']?.toString() ?? '',
         createdAt: parseDate(json['createdAt']),
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'image': image,
+        'caption': caption,
+        'createdAt': createdAt.toIso8601String(),
+      };
 }
 
 class UserProfileData {
@@ -476,6 +498,8 @@ class UserProfileData {
         'hometown': hometown ?? '',
         'relationshipStatus': relationshipStatus ?? '',
         'featured': featured,
+        if (profilePic != null) 'profilePic': profilePic,
+        if (coverPic != null) 'coverPic': coverPic,
       };
 }
 
@@ -1345,7 +1369,20 @@ class AppNotification {
         body: json['body']?.toString() ?? '',
         linkType: json['linkType']?.toString(),
         linkId: json['linkId']?.toString(),
-        isRead: json['readAt'] != null,
+        isRead: json['isRead'] == true || json['readAt'] != null,
         createdAt: parseDate(json['createdAt']),
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'actorId': actorId,
+        'actorName': actorName,
+        'title': title,
+        'body': body,
+        'linkType': linkType,
+        'linkId': linkId,
+        'isRead': isRead,
+        'createdAt': createdAt.toIso8601String(),
+      };
 }

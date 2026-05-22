@@ -13,6 +13,7 @@ import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/info_pill.dart';
 import '../../shared/widgets/report_sheet.dart';
+import '../../shared/widgets/skeleton.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../bookings/chat_screen.dart';
 import '../discover/booking_sheet.dart';
@@ -32,7 +33,8 @@ class _JobsScreenState extends State<JobsScreen> {
   var _reviews = <ReviewItem>[];
   var _reports = <ReportItem>[];
   var _activeBookings = <Booking>[];
-  var _loading = true;
+  var _loading = false;
+  var _refreshing = false;
   var _message = '';
   ProviderDetail? _myWorkerProfile;
 
@@ -56,10 +58,23 @@ class _JobsScreenState extends State<JobsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 1. Show cached jobs immediately
+    if (_allJobs.isEmpty) {
+      final cached = await LocalDb.instance.getCachedJobs();
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _allJobs = cached.map(JobPost.fromJson).toList();
+          _message = '';
+        });
+      } else if (mounted) {
+        setState(() => _loading = true);
+      }
+    }
+    if (mounted) setState(() => _refreshing = true);
+
+    // 2. Fetch fresh from network
     try {
       final myId = widget.api.storedUser?.id ?? '';
-
       final futureJobs = widget.api.getJobs();
       final futureReviews = !widget.readOnly && myId.isNotEmpty
           ? widget.api.getProviderReviews(myId)
@@ -70,7 +85,6 @@ class _JobsScreenState extends State<JobsScreen> {
       final futureBookings = !widget.readOnly && myId.isNotEmpty
           ? widget.api.getMyBookings().onError((_, __) => <Booking>[])
           : Future.value(<Booking>[]);
-      // Any user can have a provider profile — try to load it for AI recommendations
       final futureProfile = !widget.readOnly && myId.isNotEmpty
           ? widget.api
               .getProviderDetail(myId)
@@ -85,7 +99,6 @@ class _JobsScreenState extends State<JobsScreen> {
       final profile = await futureProfile;
 
       const activeStatuses = {'pending', 'accepted', 'in_progress'};
-
       if (mounted) {
         setState(() {
           _allJobs = jobs;
@@ -96,27 +109,17 @@ class _JobsScreenState extends State<JobsScreen> {
           _myWorkerProfile = profile;
           _message = '';
           _loading = false;
+          _refreshing = false;
         });
-        // Cache for offline use
-        unawaited(
-            LocalDb.instance.cacheJobs(jobs.map((j) => j.toJson()).toList()));
+        unawaited(LocalDb.instance.cacheJobs(jobs.map((j) => j.toJson()).toList()));
       }
     } catch (error) {
       if (!mounted) return;
-      // Fall back to cached jobs
-      final cached = await LocalDb.instance.getCachedJobs();
-      if (cached.isNotEmpty && mounted) {
-        setState(() {
-          _allJobs = cached.map(JobPost.fromJson).toList();
-          _message = '';
-          _loading = false;
-        });
-      } else if (mounted) {
-        setState(() {
-          _message = friendlyError(error);
-          _loading = false;
-        });
-      }
+      setState(() {
+        _refreshing = false;
+        if (_allJobs.isEmpty) _message = friendlyError(error);
+        _loading = false;
+      });
     }
   }
 
@@ -260,7 +263,10 @@ class _JobsScreenState extends State<JobsScreen> {
             ),
         ],
       ),
-      body: RefreshIndicator(
+      body: Column(
+        children: [
+          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+          Expanded(child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -335,11 +341,7 @@ class _JobsScreenState extends State<JobsScreen> {
               ),
               const SizedBox(height: 8),
             ],
-            if (_loading)
-              const Center(
-                  child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: CircularProgressIndicator())),
+            if (_loading) const SkeletonJobList(),
             if (!_loading && _message.isNotEmpty)
               EmptyState(
                   icon: Icons.cloud_off_outlined,
@@ -453,6 +455,8 @@ class _JobsScreenState extends State<JobsScreen> {
             ],
           ],
         ),
+      )),
+        ],
       ),
     );
   }
@@ -770,6 +774,8 @@ class _JobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final slotLabel =
+        job.postType == 'offering_service' ? 'clients' : 'workers';
     return AppCard(
       accentColor:
           job.postType == 'offering_service' ? appPrimary : Colors.green,
@@ -838,11 +844,13 @@ class _JobCard extends StatelessWidget {
           Wrap(spacing: 12, runSpacing: 8, children: [
             InfoPill(icon: Icons.work_outline, label: job.category),
             InfoPill(icon: Icons.place_outlined, label: job.municipality),
-            if (job.postType == 'looking_for_worker')
-              InfoPill(
-                icon: Icons.groups_outlined,
-                label: '${job.acceptedOfferCount}/${job.workersNeeded} workers',
-              ),
+            InfoPill(
+              icon: job.postType == 'offering_service'
+                  ? Icons.person_add_alt_outlined
+                  : Icons.groups_outlined,
+              label:
+                  '${job.acceptedOfferCount}/${job.workersNeeded} $slotLabel',
+            ),
             if (job.offerCount > 0) _OfferCountPill(count: job.offerCount),
             if ((job.budgetMin ?? 0) > 0)
               InfoPill(
@@ -1078,6 +1086,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   }
 
   Future<void> _acceptOffer(JobOffer offer) async {
+    final slotLabel = _job.postType == 'offering_service' ? 'client' : 'worker';
+    final pluralSlotLabel = '${slotLabel}s';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1105,8 +1115,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                 ),
                 child: Text(
                   _job.acceptedOfferCount + 1 >= _job.workersNeeded
-                      ? 'A booking will be created. This fills the worker slots, so the job will close.'
-                      : 'A booking will be created. The job stays open until ${_job.workersNeeded} workers are accepted.',
+                      ? 'A booking will be created. This fills the $slotLabel slots, so the post will close.'
+                      : 'A booking will be created. The post stays open until ${_job.workersNeeded} $pluralSlotLabel are accepted.',
                   style: TextStyle(color: Colors.green, fontSize: 13),
                 ),
               ),
@@ -1312,6 +1322,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final reports = _jobReports;
+    final slotLabel =
+        _job.postType == 'offering_service' ? 'clients' : 'workers';
     return Scaffold(
       appBar: AppBar(title: Text(_job.title)),
       bottomNavigationBar: _buildBottomBar(),
@@ -1409,14 +1421,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                           _DetailChip(
                               icon: Icons.place_outlined,
                               label: _job.municipality),
-                          if (_job.postType == 'looking_for_worker')
-                            _DetailChip(
-                              icon: Icons.groups_outlined,
-                              label:
-                                  '${_job.acceptedOfferCount}/${_job.workersNeeded} workers accepted',
-                              highlight: true,
-                              highlightColor: Colors.green,
-                            ),
+                          _DetailChip(
+                            icon: _job.postType == 'offering_service'
+                                ? Icons.person_add_alt_outlined
+                                : Icons.groups_outlined,
+                            label:
+                                '${_job.acceptedOfferCount}/${_job.workersNeeded} $slotLabel accepted',
+                            highlight: true,
+                            highlightColor: Colors.green,
+                          ),
                           if ((_job.budgetMin ?? 0) > 0)
                             _DetailChip(
                                 icon: Icons.payments_outlined,
@@ -2394,18 +2407,19 @@ class _JobPostSheetState extends State<_JobPostSheet> {
               ),
             ),
             const SizedBox(height: 10),
-            if (_postType == 'looking_for_worker') ...[
-              TextField(
-                controller: _workersNeeded,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'How many workers do you need?',
-                  helperText:
-                      'The job stays open until this many offers are accepted.',
-                ),
+            TextField(
+              controller: _workersNeeded,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: _postType == 'offering_service'
+                    ? 'How many clients do you want?'
+                    : 'How many workers do you need?',
+                helperText: _postType == 'offering_service'
+                    ? 'The post stays open until this many clients are accepted.'
+                    : 'The job stays open until this many offers are accepted.',
               ),
-              const SizedBox(height: 10),
-            ],
+            ),
+            const SizedBox(height: 10),
             TextField(
                 controller: _location,
                 decoration:

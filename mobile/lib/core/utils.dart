@@ -88,13 +88,18 @@ List<String> splitCsv(String value) => value
     .where((item) => item.isNotEmpty)
     .toList();
 
-int asInt(Object? value) =>
-    value is int ? value : int.tryParse(value?.toString() ?? '') ?? 0;
+int asInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return double.tryParse(value?.toString() ?? '')?.round() ?? 0;
+}
 
 int? nullableInt(Object? value) => value == null ? null : asInt(value);
 
-DateTime parseDate(Object? value) =>
-    DateTime.tryParse(value?.toString() ?? '') ?? DateTime.now();
+DateTime parseDate(Object? value) {
+  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+  return DateTime.tryParse(value?.toString() ?? '') ?? DateTime.now();
+}
 
 String formatDate(DateTime value) =>
     '${value.month}/${value.day}/${value.year}';

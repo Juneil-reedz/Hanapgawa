@@ -20,10 +20,13 @@ import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../shared/widgets/avatar.dart';
 import '../../shared/widgets/empty_state.dart';
+import '../../shared/widgets/skeleton.dart';
 import '../notifications/notification_screen.dart';
 import '../saved/saved_screen.dart';
 import '../settings/help_screen.dart';
+import '../settings/rate_feedback_sheet.dart';
 import 'feed_card.dart';
+import 'suggested_users_sheet.dart';
 import 'user_profile_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
@@ -32,11 +35,15 @@ class DiscoverScreen extends StatefulWidget {
       required this.api,
       required this.onLogout,
       this.readOnly = false,
-      this.refreshKey = 0});
+      this.refreshKey = 0,
+      this.notificationKey,
+      this.suggestedKey});
   final MarketplaceApi api;
   final Future<void> Function() onLogout;
   final bool readOnly;
   final int refreshKey;
+  final GlobalKey? notificationKey;
+  final GlobalKey? suggestedKey;
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -160,12 +167,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   Future<void> _loadFeed({bool showSpinner = true}) async {
     if (showSpinner && _items.isEmpty) setState(() => _loading = true);
-
-    if (!SyncService.instance.isOnline) {
-      // Offline: load from local cache
-      await _loadFeedFromCache();
-      return;
-    }
 
     try {
       final items = await widget.api.getFeed();
@@ -516,6 +517,22 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.star_rate_outlined, color: Color(0xFFFFC107)),
+              title: const Text('Rate & Feedback'),
+              subtitle: const Text('Tell us how we\'re doing'),
+              onTap: () {
+                Navigator.pop(context);
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  builder: (_) => RateFeedbackSheet(api: widget.api),
+                );
+              },
+            ),
             const Divider(),
             ListTile(
               leading: _loggingOut
@@ -569,9 +586,24 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             tooltip: _showSearch ? 'Close search' : 'Search',
             onPressed: _toggleSearch,
           ),
+          IconButton(
+            key: widget.suggestedKey,
+            icon: const Icon(Icons.person_add_outlined),
+            tooltip: 'People you may know',
+            onPressed: () => showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              shape: const RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              builder: (_) => SuggestedUsersSheet(api: widget.api),
+            ),
+          ),
           Stack(
             children: [
               IconButton(
+                key: widget.notificationKey,
                 icon: const Icon(Icons.notifications_outlined),
                 onPressed: () async {
                   await Navigator.push(
@@ -644,7 +676,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               child: const Icon(Icons.post_add),
             ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonFeedList()
           : _message.isNotEmpty && !_isSearching
               ? EmptyState(
                   icon: Icons.newspaper_outlined,
@@ -1019,6 +1051,13 @@ class _StoryCircle extends StatelessWidget {
       ),
     );
   }
+}
+
+TextStyle _storyViewerCaptionStyle(StoryItem story) {
+  const styles = _StoryComposeSheetState._captionStyles;
+  final idx = (story.metadata['fontStyleIndex'] as num?)?.toInt() ?? 0;
+  final base = idx >= 0 && idx < styles.length ? styles[idx] : styles[0];
+  return base.copyWith(fontSize: (base.fontSize ?? 21) + 3);
 }
 
 String? _storyContentImage(StoryItem story) {
@@ -1462,8 +1501,6 @@ class _StoryViewerState extends State<_StoryViewer> {
   }
 
   Widget _buildArrangedStoryLayers() {
-    final hasLayout = _story.metadata['layout'] is Map;
-    if (!hasLayout) return const SizedBox.shrink();
     return LayoutBuilder(builder: (context, constraints) {
       Widget placed({
         required Offset offset,
@@ -1479,16 +1516,77 @@ class _StoryViewerState extends State<_StoryViewer> {
         );
       }
 
-      return _buildOwnerFlipSurface(Stack(children: [
-        if (_story.image != null)
+      // Photo sticker layouts from metadata
+      final photoLayouts = _story.metadata['photoStickers'];
+      final extraPhotosRaw = _story.metadata['extraPhotos'];
+
+      // All photo stickers: main image + extras
+      final allPhotos = <({String image, Offset offset})>[];
+      if (_story.image != null) {
+        Offset firstOffset = const Offset(0.5, 0.46);
+        if (photoLayouts is List && photoLayouts.isNotEmpty) {
+          final m = photoLayouts[0];
+          if (m is Map) {
+            firstOffset = Offset(
+              ((m['x'] as num?) ?? 0.5).toDouble(),
+              ((m['y'] as num?) ?? 0.46).toDouble(),
+            );
+          }
+        }
+        allPhotos.add((image: _story.image!, offset: firstOffset));
+      }
+      if (extraPhotosRaw is List) {
+        for (int i = 0; i < extraPhotosRaw.length; i++) {
+          final raw = extraPhotosRaw[i]?.toString() ?? '';
+          if (raw.isEmpty) continue;
+          Offset off = Offset(0.3 + (i + 1) % 3 * 0.2, 0.3 + (i + 1) ~/ 3 * 0.2);
+          if (photoLayouts is List && photoLayouts.length > i + 1) {
+            final m = photoLayouts[i + 1];
+            if (m is Map) {
+              off = Offset(
+                ((m['x'] as num?) ?? off.dx).toDouble(),
+                ((m['y'] as num?) ?? off.dy).toDouble(),
+              );
+            }
+          }
+          allPhotos.add((image: raw, offset: off));
+        }
+      }
+
+      // Captions from metadata
+      final captionsRaw = _story.metadata['captions'];
+      final captions = <({String text, Offset offset, int styleIndex})>[];
+      if (captionsRaw is List) {
+        for (final c in captionsRaw) {
+          if (c is! Map) continue;
+          final text = c['text']?.toString() ?? '';
+          if (text.isEmpty) continue;
+          captions.add((
+            text: text,
+            offset: Offset(
+              ((c['x'] as num?) ?? 0.5).toDouble(),
+              ((c['y'] as num?) ?? 0.78).toDouble(),
+            ),
+            styleIndex: ((c['styleIndex'] as num?) ?? 0).toInt(),
+          ));
+        }
+      }
+
+      // Fall back to story.body for old-style stories with no captions metadata
+      final hasNewCaptions = captions.isNotEmpty;
+
+      final layers = Stack(children: [
+        // Photo stickers
+        for (final p in allPhotos)
           placed(
-            offset: _storyLayoutOffset('photo', const Offset(0.5, 0.46)),
-            size: const Size(220, 220),
+            offset: p.offset,
+            size: const Size(180, 180),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: _storyImage(_story.image!, _story.fullName),
+              borderRadius: BorderRadius.circular(18),
+              child: _storyImage(p.image, _story.fullName),
             ),
           ),
+        // Video
         if (_story.video != null &&
             _videoController?.value.isInitialized == true)
           placed(
@@ -1506,7 +1604,27 @@ class _StoryViewerState extends State<_StoryViewer> {
               ),
             ),
           ),
-      ]));
+        // Caption stickers
+        if (hasNewCaptions)
+          for (final cap in captions)
+            Positioned(
+              left: cap.offset.dx * constraints.maxWidth - 135,
+              top: cap.offset.dy * constraints.maxHeight - 22,
+              width: 270,
+              child: Text(
+                cap.text,
+                textAlign: TextAlign.center,
+                style: () {
+                  const styles = _StoryComposeSheetState._captionStyles;
+                  final idx = cap.styleIndex.clamp(0, styles.length - 1);
+                  final base = styles[idx];
+                  return base.copyWith(fontSize: (base.fontSize ?? 21) + 3);
+                }(),
+              ),
+            ),
+      ]);
+
+      return _buildOwnerFlipSurface(layers);
     });
   }
 
@@ -1779,12 +1897,12 @@ class _StoryViewerState extends State<_StoryViewer> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (story.body.isNotEmpty)
-                        Text(story.body,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.w900)),
+                      if (story.body.isNotEmpty &&
+                          story.metadata['captions'] is! List)
+                        Text(
+                          story.body,
+                          style: _storyViewerCaptionStyle(story),
+                        ),
                       if (location != null)
                         _StoryMetaPill(
                             icon: Icons.place_outlined, label: location),
@@ -2189,6 +2307,44 @@ class _SearchIcon extends StatelessWidget {
       );
 }
 
+// ── Per-slide story data ─────────────────────────────────────────────────────
+
+class _PhotoSticker {
+  _PhotoSticker(this.bytes, {this.offset = const Offset(0.5, 0.46)});
+  Uint8List bytes;
+  Offset offset;
+}
+
+class _TextSticker {
+  _TextSticker({String text = '', Offset? offset, this.styleIndex = 0})
+      : ctrl = TextEditingController(text: text),
+        offset = offset ?? const Offset(0.5, 0.78);
+  final TextEditingController ctrl;
+  Offset offset;
+  int styleIndex;
+  void dispose() => ctrl.dispose();
+}
+
+class _StorySlide {
+  _StorySlide();
+  final photos = <_PhotoSticker>[];
+  String? videoPath;
+  String? gif;
+  final texts = <_TextSticker>[_TextSticker()];
+  var videoOffset = const Offset(0.5, 0.52);
+
+  bool get hasMedia => photos.isNotEmpty || videoPath != null || gif != null;
+  bool get hasContent =>
+      photos.isNotEmpty ||
+      videoPath != null ||
+      gif != null ||
+      texts.any((t) => t.ctrl.text.trim().isNotEmpty);
+
+  void dispose() {
+    for (final t in texts) t.dispose();
+  }
+}
+
 class _StoryComposeSheet extends StatefulWidget {
   const _StoryComposeSheet({required this.api, required this.onPosted});
 
@@ -2200,13 +2356,10 @@ class _StoryComposeSheet extends StatefulWidget {
 }
 
 class _StoryComposeSheetState extends State<_StoryComposeSheet> {
-  final _bodyCtrl = TextEditingController();
-  Uint8List? _imageBytes;
-  String? _videoPath;
-  String? _gif;
-  var _photoOffset = const Offset(0.5, 0.46);
-  var _videoOffset = const Offset(0.5, 0.52);
-  var _textOffset = const Offset(0.5, 0.78);
+  final _slides = [_StorySlide()];
+  var _currentSlide = 0;
+  var _fontStyleIndex = 0;
+
   String? _location;
   String? _music;
   String? _musicUrl;
@@ -2214,6 +2367,10 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   var _backgroundColor = appPrimary;
   var _posting = false;
   String? _error;
+
+  _StorySlide get _slide => _slides[_currentSlide];
+  bool get _hasMedia => _slide.hasMedia;
+  int _activeTextIdx = 0;
 
   static const _paletteColors = [
     Color(0xFF7B2FF7),
@@ -2226,13 +2383,43 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     Color(0xFF1F2937),
   ];
 
+  static const _fontStyleNames = ['Bold', 'Light', 'Italic', 'Pop', 'Glow', 'Mono'];
+  static const _captionStyles = [
+    TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w800, shadows: [Shadow(color: Colors.black54, blurRadius: 8)]),
+    TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w300, letterSpacing: 2.5),
+    TextStyle(color: Colors.white, fontSize: 22, fontStyle: FontStyle.italic, fontWeight: FontWeight.w700),
+    TextStyle(color: Colors.black, fontSize: 20, fontWeight: FontWeight.w900, backgroundColor: Color(0xDDFFFFFF), height: 1.5),
+    TextStyle(color: Color(0xFFFFEB3B), fontSize: 21, fontWeight: FontWeight.w900, shadows: [Shadow(color: Colors.orange, blurRadius: 18)]),
+    TextStyle(color: Colors.white, fontSize: 17, fontFamily: 'monospace', fontWeight: FontWeight.w600, letterSpacing: 1.2),
+  ];
+
   @override
   void dispose() {
-    _bodyCtrl.dispose();
+    for (final s in _slides) {
+      s.dispose();
+    }
     super.dispose();
   }
 
+  void _addSlide() {
+    if (_slides.length >= 5) return;
+    setState(() {
+      _slides.add(_StorySlide());
+      _currentSlide = _slides.length - 1;
+    });
+  }
+
+  void _removeCurrentSlide() {
+    if (_slides.length <= 1) return;
+    setState(() {
+      _slides[_currentSlide].dispose();
+      _slides.removeAt(_currentSlide);
+      _currentSlide = (_currentSlide - 1).clamp(0, _slides.length - 1);
+    });
+  }
+
   Future<void> _pickImage() async {
+    if (_slide.photos.length >= 5) return;
     final file = await ImagePicker().pickImage(
         source: ImageSource.gallery,
         maxWidth: 1200,
@@ -2240,9 +2427,27 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
         imageQuality: 80);
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
+    // Stagger positions so photos don't all stack in the same spot
+    final idx = _slide.photos.length;
+    final offset = Offset(
+      0.3 + (idx % 3) * 0.2,
+      0.3 + (idx ~/ 3) * 0.2,
+    );
     setState(() {
-      _imageBytes = bytes;
-      _gif = null;
+      _slide.photos.add(_PhotoSticker(bytes, offset: offset));
+      _slide.gif = null;
+    });
+  }
+
+  void _addTextSticker() {
+    if (_slide.texts.length >= 5) return;
+    final idx = _slide.texts.length;
+    setState(() {
+      _slide.texts.add(_TextSticker(
+        styleIndex: _fontStyleIndex,
+        offset: Offset(0.5, 0.55 + idx * 0.1),
+      ));
+      _activeTextIdx = _slide.texts.length - 1;
     });
   }
 
@@ -2267,15 +2472,15 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (!mounted) return;
       setState(() {
         _posting = false;
-        _videoPath = path;
-        _gif = null;
+        _slide.videoPath = path;
+        _slide.gif = null;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _posting = false;
-        _videoPath = file.path;
-        _gif = null;
+        _slide.videoPath = file.path;
+        _slide.gif = null;
         _error = null;
       });
     }
@@ -2298,9 +2503,9 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     );
     if (item != null) {
       setState(() {
-        _gif = item['url']?.toString();
-        _imageBytes = null;
-        _videoPath = null;
+        _slide.gif = item['url']?.toString();
+        _slide.photos.clear();
+        _slide.videoPath = null;
       });
     }
   }
@@ -2354,41 +2559,64 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     }
   }
 
+  Map<String, dynamic> _sharedMetadata() => {
+        if (_location != null) 'location': _location,
+        if (_music != null) 'music': _music,
+        if (_musicUrl != null) 'musicUrl': _musicUrl,
+        if (_musicUrl != null) 'previewUrl': _musicUrl,
+        if (_musicUrl != null) 'audioUrl': _musicUrl,
+        'backgroundColor': _backgroundColor.value,
+        'fontStyleIndex': _fontStyleIndex,
+      };
+
+  Map<String, dynamic> _slideMetadata(_StorySlide s) => {
+        ..._sharedMetadata(),
+        if (s.gif != null) 'gif': s.gif,
+        'layout': {
+          'video': {'x': s.videoOffset.dx, 'y': s.videoOffset.dy},
+        },
+        'photoStickers': s.photos
+            .map((p) => {'x': p.offset.dx, 'y': p.offset.dy})
+            .toList(),
+        'captions': s.texts
+            .where((t) => t.ctrl.text.trim().isNotEmpty)
+            .map((t) => {
+                  'text': t.ctrl.text.trim(),
+                  'x': t.offset.dx,
+                  'y': t.offset.dy,
+                  'styleIndex': t.styleIndex,
+                })
+            .toList(),
+        if (s.photos.length > 1)
+          'extraPhotos': s.photos
+              .skip(1)
+              .map((p) => base64Encode(p.bytes))
+              .toList(),
+      };
+
   Future<void> _submit() async {
-    final text = _bodyCtrl.text.trim();
-    if (text.isEmpty &&
-        _imageBytes == null &&
-        _videoPath == null &&
-        _gif == null) {
+    final hasContent = _slides.any((s) => s.hasContent);
+    if (!hasContent) {
       setState(() => _error = 'Add text, photo, video, or GIF to your story.');
       return;
     }
-    if (_videoPath != null && !SyncService.instance.isOnline) {
+    final hasVideo = _slides.any((s) => s.videoPath != null);
+    if (hasVideo && !SyncService.instance.isOnline) {
       setState(
           () => _error = 'Connect to the internet to upload video stories.');
       return;
     }
     setState(() => _posting = true);
-    final image = _imageBytes == null ? null : base64Encode(_imageBytes!);
-    final metadata = <String, dynamic>{
-      if (_gif != null) 'gif': _gif,
-      if (_location != null) 'location': _location,
-      if (_music != null) 'music': _music,
-      if (_musicUrl != null) 'musicUrl': _musicUrl,
-      if (_musicUrl != null) 'previewUrl': _musicUrl,
-      if (_musicUrl != null) 'audioUrl': _musicUrl,
-      'backgroundColor': _backgroundColor.value,
-      'layout': {
-        'photo': {'x': _photoOffset.dx, 'y': _photoOffset.dy},
-        'video': {'x': _videoOffset.dx, 'y': _videoOffset.dy},
-        'text': {'x': _textOffset.dx, 'y': _textOffset.dy},
-      },
-    };
+
     if (!SyncService.instance.isOnline) {
+      // Offline: queue first non-empty slide only
+      final s = _slides.firstWhere((s) => s.hasContent, orElse: () => _slides.first);
+      final firstPhoto = s.photos.isNotEmpty ? base64Encode(s.photos.first.bytes) : null;
+      final body = s.texts.map((t) => t.ctrl.text.trim()).where((t) => t.isNotEmpty).join('\n');
       await LocalDb.instance.queueAction('create_story', {
-        'body': text,
-        if (image != null) 'image': image,
-        'metadata': metadata,
+        'body': body,
+        if (firstPhoto != null) 'image': firstPhoto,
+        'metadata': _slideMetadata(s),
         'privacy': _privacy,
       });
       if (!mounted) return;
@@ -2396,27 +2624,35 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       widget.onPosted(queued: true);
       return;
     }
+
     try {
-      final video = _videoPath == null
-          ? null
-          : await widget.api.uploadFileToCloudinary(_videoPath!, 'video');
-      if (_videoPath != null && (video == null || video.isEmpty)) {
-        throw Exception('Video upload failed.');
+      for (final s in _slides) {
+        if (!s.hasContent) continue;
+        final firstPhoto = s.photos.isNotEmpty ? base64Encode(s.photos.first.bytes) : null;
+        final body = s.texts.map((t) => t.ctrl.text.trim()).where((t) => t.isNotEmpty).join('\n');
+        String? video;
+        if (s.videoPath != null) {
+          final uploaded =
+              await widget.api.uploadFileToCloudinary(s.videoPath!, 'video');
+          if (uploaded.isEmpty) throw Exception('Video upload failed.');
+          video = uploaded;
+        }
+        await widget.api.createStory(
+          body: body,
+          image: firstPhoto,
+          video: video,
+          metadata: _slideMetadata(s),
+          privacy: _privacy,
+        );
       }
-      await widget.api.createStory(
-        body: text,
-        image: image,
-        video: video,
-        metadata: metadata,
-        privacy: _privacy,
-      );
       if (!mounted) return;
       Navigator.pop(context);
       widget.onPosted();
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
-        if (_videoPath != null) {
+        final s = _slides.first;
+        if (s.videoPath != null) {
           setState(() {
             _posting = false;
             _error =
@@ -2424,10 +2660,12 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
           });
           return;
         }
+        final firstPhoto = s.photos.isNotEmpty ? base64Encode(s.photos.first.bytes) : null;
+        final body = s.texts.map((t) => t.ctrl.text.trim()).where((t) => t.isNotEmpty).join('\n');
         await LocalDb.instance.queueAction('create_story', {
-          'body': text,
-          if (image != null) 'image': image,
-          'metadata': metadata,
+          'body': body,
+          if (firstPhoto != null) 'image': firstPhoto,
+          'metadata': _slideMetadata(s),
           'privacy': _privacy,
         });
         if (!mounted) return;
@@ -2448,16 +2686,12 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       );
 
   Widget _buildStoryArrangeCanvas(bool hasMedia) {
+    final s = _slide;
     return LayoutBuilder(builder: (context, constraints) {
-      void movePhoto(DragUpdateDetails details) => setState(() {
-            _photoOffset = _clampStoryOffset(_photoOffset +
-                Offset(details.delta.dx / constraints.maxWidth,
-                    details.delta.dy / constraints.maxHeight));
-          });
-      void moveVideo(DragUpdateDetails details) => setState(() {
-            _videoOffset = _clampStoryOffset(_videoOffset +
-                Offset(details.delta.dx / constraints.maxWidth,
-                    details.delta.dy / constraints.maxHeight));
+      void moveVideo(DragUpdateDetails d) => setState(() {
+            s.videoOffset = _clampStoryOffset(s.videoOffset +
+                Offset(d.delta.dx / constraints.maxWidth,
+                    d.delta.dy / constraints.maxHeight));
           });
 
       Widget placed({
@@ -2477,23 +2711,47 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
 
       return Stack(fit: StackFit.expand, children: [
         _GradientBg(_backgroundColor),
-        if (_gif != null)
-          Image.network(_gif!,
-              fit: BoxFit.cover,
+        if (s.gif != null)
+          Image.network(s.gif!, fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-        if (_imageBytes != null)
+        // ── All photo stickers
+        for (int i = 0; i < s.photos.length; i++)
           placed(
-            offset: _photoOffset,
-            size: const Size(180, 180),
-            onPanUpdate: movePhoto,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Image.memory(_imageBytes!, fit: BoxFit.cover),
-            ),
+            offset: s.photos[i].offset,
+            size: const Size(150, 150),
+            onPanUpdate: (d) => setState(() {
+              s.photos[i].offset = _clampStoryOffset(s.photos[i].offset +
+                  Offset(d.delta.dx / constraints.maxWidth,
+                      d.delta.dy / constraints.maxHeight));
+            }),
+            child: Stack(children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.memory(s.photos[i].bytes,
+                    fit: BoxFit.cover, width: 150, height: 150),
+              ),
+              // remove button for each photo
+              Positioned(
+                top: 2,
+                right: 2,
+                child: GestureDetector(
+                  onTap: () => setState(() => s.photos.removeAt(i)),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, color: Colors.white, size: 13),
+                  ),
+                ),
+              ),
+            ]),
           ),
-        if (_videoPath != null)
+        if (s.videoPath != null)
           placed(
-            offset: _videoOffset,
+            offset: s.videoOffset,
             size: const Size(150, 200),
             onPanUpdate: moveVideo,
             child: Container(
@@ -2514,12 +2772,15 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
               ),
             ),
           ),
-        if (hasMedia)
+        // ── All text stickers
+        for (int i = 0; i < s.texts.length; i++)
+          _buildTextStickerOnCanvas(s.texts[i], i, constraints, hasMedia),
+        if (hasMedia || s.texts.any((t) => t.ctrl.text.trim().isNotEmpty))
           const Positioned(
             left: 12,
             right: 12,
             bottom: 8,
-            child: Text('Drag photo, video, or caption to arrange your story',
+            child: Text('Drag photos or captions to arrange',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70, fontSize: 11)),
           ),
@@ -2527,46 +2788,71 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     });
   }
 
-  Widget _buildDraggableStoryText(bool hasMedia) {
-    return LayoutBuilder(builder: (context, constraints) {
-      return Positioned(
-        left: _textOffset.dx * constraints.maxWidth - 135,
-        top: _textOffset.dy * constraints.maxHeight - 44,
-        width: 270,
-        child: GestureDetector(
-          onPanUpdate: (details) => setState(() {
-            _textOffset = _clampStoryOffset(_textOffset +
-                Offset(details.delta.dx / constraints.maxWidth,
-                    details.delta.dy / constraints.maxHeight));
+  Widget _buildTextStickerOnCanvas(
+      _TextSticker sticker, int idx, BoxConstraints constraints, bool hasMedia) {
+    final style = _captionStyles[sticker.styleIndex];
+    final isActive = _activeTextIdx == idx;
+    return Positioned(
+      left: sticker.offset.dx * constraints.maxWidth - 135,
+      top: sticker.offset.dy * constraints.maxHeight - 44,
+      width: 270,
+      child: GestureDetector(
+        onTap: () => setState(() => _activeTextIdx = idx),
+        child: Listener(
+          onPointerMove: (event) => setState(() {
+            sticker.offset = _clampStoryOffset(sticker.offset +
+                Offset(event.delta.dx / constraints.maxWidth,
+                    event.delta.dy / constraints.maxHeight));
           }),
-          child: TextField(
-            controller: _bodyCtrl,
-            maxLines: hasMedia ? 2 : null,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              height: 1.25,
-              shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
-            ),
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              fillColor: Colors.black.withAlpha(35),
-              filled: true,
-              hintText:
-                  hasMedia ? 'Add a caption...' : "What's happening today?",
-              hintStyle: const TextStyle(color: Colors.white70, fontSize: 18),
+          behavior: HitTestBehavior.translucent,
+          child: Container(
+            decoration: isActive && idx > 0
+                ? BoxDecoration(
+                    border: Border.all(color: Colors.white38, width: 1),
+                    borderRadius: BorderRadius.circular(8),
+                  )
+                : null,
+            child: TextField(
+              controller: sticker.ctrl,
+              maxLines: hasMedia ? 3 : null,
+              textAlign: TextAlign.center,
+              onTap: () => setState(() => _activeTextIdx = idx),
+              style: style.copyWith(height: style.height ?? 1.25),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                filled: false,
+                contentPadding: EdgeInsets.zero,
+                hintText: idx == 0
+                    ? (hasMedia ? 'Add a caption...' : "What's happening today?")
+                    : 'Add text...',
+                hintStyle:
+                    const TextStyle(color: Colors.white54, fontSize: 16),
+                suffixIcon: idx > 0
+                    ? GestureDetector(
+                        onTap: () => setState(() {
+                          sticker.dispose();
+                          _slide.texts.removeAt(idx);
+                          _activeTextIdx =
+                              _activeTextIdx.clamp(0, _slide.texts.length - 1);
+                        }),
+                        child: const Icon(Icons.close,
+                            color: Colors.white60, size: 16),
+                      )
+                    : null,
+              ),
             ),
           ),
         ),
-      );
-    });
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasMedia = _imageBytes != null || _videoPath != null || _gif != null;
+    final hasMedia = _hasMedia;
     return SafeArea(
       child: Padding(
         padding:
@@ -2629,19 +2915,20 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                   width: double.infinity,
                   child: Stack(fit: StackFit.expand, children: [
                     _buildStoryArrangeCanvas(hasMedia),
-                    // Gradient overlay for readability when media is shown
                     if (hasMedia)
-                      Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.black38,
-                              Colors.transparent,
-                              Colors.black54,
-                            ],
-                            stops: [0.0, 0.45, 1.0],
+                      IgnorePointer(
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black38,
+                                Colors.transparent,
+                                Colors.black54,
+                              ],
+                              stops: [0.0, 0.45, 1.0],
+                            ),
                           ),
                         ),
                       ),
@@ -2670,16 +2957,15 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                             ]),
                       ),
                     ),
-                    // Remove image/gif button top-right
-                    if (hasMedia)
+                    // Remove video/gif button
+                    if (_slide.videoPath != null || _slide.gif != null)
                       Positioned(
                         top: 12,
                         right: 12,
                         child: GestureDetector(
                           onTap: () => setState(() {
-                            _imageBytes = null;
-                            _videoPath = null;
-                            _gif = null;
+                            _slide.videoPath = null;
+                            _slide.gif = null;
                           }),
                           child: Container(
                             width: 28,
@@ -2693,57 +2979,161 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                           ),
                         ),
                       ),
-                    _buildDraggableStoryText(hasMedia),
                   ]),
                 ),
               ),
             ),
-            // ── Color palette (text-only mode)
-            if (!hasMedia) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 38,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  children: _paletteColors.map((color) {
-                    final selected = _backgroundColor.value == color.value;
-                    return GestureDetector(
-                      onTap: () => setState(() => _backgroundColor = color),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: selected ? 34 : 28,
-                        height: selected ? 34 : 28,
-                        margin: EdgeInsets.symmetric(
-                            horizontal: 5, vertical: selected ? 2 : 5),
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: selected ? Colors.white : Colors.transparent,
-                            width: 2.5,
-                          ),
-                          boxShadow: selected
-                              ? [
-                                  BoxShadow(
-                                      color: color.withAlpha(120),
-                                      blurRadius: 10,
-                                      spreadRadius: 2)
-                                ]
-                              : null,
-                        ),
-                        child: selected
-                            ? const Icon(Icons.check,
-                                color: Colors.white, size: 14)
+            // ── Slide navigation + add/remove
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (int i = 0; i < _slides.length; i++)
+                  GestureDetector(
+                    onTap: () => setState(() => _currentSlide = i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: i == _currentSlide ? 20 : 8,
+                      height: 8,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color: i == _currentSlide ? appPrimary : appBorder,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                if (_slides.length < 5) ...[
+                  const SizedBox(width: 10),
+                  GestureDetector(
+                    onTap: _addSlide,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: appSurface,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: appBorder),
+                      ),
+                      child: const Icon(Icons.add, color: appPrimary, size: 16),
+                    ),
+                  ),
+                ],
+                if (_slides.length > 1) ...[
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: _removeCurrentSlide,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.red.withAlpha(18),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.red.withAlpha(80)),
+                      ),
+                      child: const Icon(Icons.delete_outline,
+                          color: Colors.red, size: 15),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            // ── Font style selector
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 38,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _fontStyleNames.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) {
+                  final selected = _fontStyleIndex == i;
+                  return GestureDetector(
+                    onTap: () => setState(() {
+                      _fontStyleIndex = i;
+                      if (_activeTextIdx < _slide.texts.length) {
+                        _slide.texts[_activeTextIdx].styleIndex = i;
+                      }
+                    }),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: selected ? appPrimary : Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                            color: selected ? appPrimary : appBorder),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                    color: appPrimary.withAlpha(40),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2))
+                              ]
                             : null,
                       ),
-                    );
-                  }).toList(),
-                ),
+                      child: Text(
+                        'Aa  ${_fontStyleNames[i]}',
+                        style: TextStyle(
+                          color: selected
+                              ? Colors.white
+                              : Colors.grey.shade700,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
+            // ── Color palette
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: _paletteColors.map((color) {
+                  final selected = _backgroundColor.value == color.value;
+                  return GestureDetector(
+                    onTap: () => setState(() => _backgroundColor = color),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: selected ? 34 : 28,
+                      height: selected ? 34 : 28,
+                      margin: EdgeInsets.symmetric(
+                          horizontal: 5, vertical: selected ? 2 : 5),
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: selected ? Colors.white : Colors.transparent,
+                          width: 2.5,
+                        ),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                    color: color.withAlpha(120),
+                                    blurRadius: 10,
+                                    spreadRadius: 2)
+                              ]
+                            : null,
+                      ),
+                      child: selected
+                          ? const Icon(Icons.check,
+                              color: Colors.white, size: 14)
+                          : null,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
             // ── Action chips
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             SizedBox(
               height: 46,
               child: ListView(
@@ -2752,23 +3142,38 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                 children: [
                   _StoryChip(
                     icon: Icons.photo_outlined,
-                    label: 'Photo',
+                    label: _slide.photos.isEmpty
+                        ? 'Photo'
+                        : 'Photo (${_slide.photos.length})',
                     color: Colors.blue,
-                    onTap: _pickImage,
+                    active: _slide.photos.isNotEmpty,
+                    onTap: _slide.photos.length < 5 ? _pickImage : () {},
                   ),
                   const SizedBox(width: 8),
                   _StoryChip(
                     icon: Icons.videocam_outlined,
-                    label: 'Video',
+                    label: _slide.videoPath != null ? 'Video ✓' : 'Video',
                     color: Colors.deepPurple,
+                    active: _slide.videoPath != null,
                     onTap: _pickVideo,
                   ),
                   const SizedBox(width: 8),
                   _StoryChip(
                     icon: Icons.gif_box_outlined,
-                    label: 'GIF',
+                    label: _slide.gif != null ? 'GIF ✓' : 'GIF',
                     color: Colors.orange,
+                    active: _slide.gif != null,
                     onTap: _addGif,
+                  ),
+                  const SizedBox(width: 8),
+                  _StoryChip(
+                    icon: Icons.text_fields_outlined,
+                    label: _slide.texts.length > 1
+                        ? 'Text (${_slide.texts.length})'
+                        : '+ Text',
+                    color: Colors.pink,
+                    active: _slide.texts.length > 1,
+                    onTap: _slide.texts.length < 5 ? _addTextSticker : () {},
                   ),
                   const SizedBox(width: 8),
                   _StoryChip(
@@ -2852,7 +3257,11 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                                 color: Colors.white, size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            _posting ? 'Sharing...' : 'Share to My Day',
+                            _posting
+                                ? 'Sharing...'
+                                : _slides.length > 1
+                                    ? 'Share ${_slides.length} slides to My Day'
+                                    : 'Share to My Day',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,

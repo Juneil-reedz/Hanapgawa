@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import 'core/api/marketplace_api.dart';
@@ -8,6 +6,7 @@ import 'core/local/sync_service.dart';
 import 'core/models/models.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screen.dart';
+import 'features/discover/suggested_users_sheet.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/shell/shell_screen.dart';
 
@@ -30,11 +29,11 @@ class _HanapGawaAppState extends State<HanapGawaApp>
     duration: const Duration(milliseconds: 420),
   );
   Widget? _exitingWidget;
-  var _useBookFlip = false;
 
   var _ready = false;
   var _splashComplete = false;
   var _showOnboarding = false;
+  var _showFollowSuggestions = false;
   SessionUser? _user;
 
   @override
@@ -72,7 +71,6 @@ class _HanapGawaAppState extends State<HanapGawaApp>
   Future<void> _finishOnboarding() async {
     api.markOnboardingSeen();
     _slideCtrl.duration = const Duration(milliseconds: 420);
-    _useBookFlip = false;
     _exitingWidget = OnboardingScreen(onDone: () async {});
     _slideCtrl.forward(from: 0);
     setState(() => _showOnboarding = false);
@@ -80,21 +78,36 @@ class _HanapGawaAppState extends State<HanapGawaApp>
 
   Future<void> _setSession(AuthResponse auth) async {
     await api.persistSession(auth);
-    _slideCtrl.duration = const Duration(milliseconds: 720);
-    _useBookFlip = true;
+    _slideCtrl.duration = const Duration(milliseconds: 420);
+    final showSuggestions = !api.hasSeenFollowSuggestions;
     setState(() {
       _exitingWidget = AuthScreen(api: api, onAuthenticated: (_) async {});
       _user = auth.user;
+      _showFollowSuggestions = showSuggestions;
+    });
+    _slideCtrl.forward(from: 0);
+  }
+
+  Future<void> _finishFollowSuggestions() async {
+    api.markFollowSuggestionsSeen();
+    _slideCtrl.duration = const Duration(milliseconds: 420);
+    setState(() {
+      _exitingWidget =
+          SuggestedUsersOnboarding(api: api, onDone: () {});
+      _showFollowSuggestions = false;
     });
     _slideCtrl.forward(from: 0);
   }
 
   Future<void> _logout() async {
+    _slideCtrl.duration = const Duration(milliseconds: 420);
     await api.clearSession();
     setState(() {
+      _exitingWidget = ShellScreen(api: api, onLogout: () async {});
       _user = null;
-      _showOnboarding = true;
+      _showOnboarding = false;
     });
+    _slideCtrl.forward(from: 0);
   }
 
   Widget _buildCurrentScreen() {
@@ -108,6 +121,12 @@ class _HanapGawaAppState extends State<HanapGawaApp>
     if (_showOnboarding) {
       return OnboardingScreen(
           key: const ValueKey('onboarding'), onDone: _finishOnboarding);
+    }
+    if (_showFollowSuggestions && _user != null) {
+      return SuggestedUsersOnboarding(
+          key: const ValueKey('follow_suggestions'),
+          api: api,
+          onDone: _finishFollowSuggestions);
     }
     if (_user == null) {
       return AuthScreen(
@@ -139,13 +158,6 @@ class _HanapGawaAppState extends State<HanapGawaApp>
         builder: (context, _) {
           final current = _buildCurrentScreen();
           if (_exitingWidget != null && _slideCtrl.value < 1.0) {
-            if (_useBookFlip) {
-              return _BookFlipTransition(
-                animation: _slideCtrl,
-                exiting: _exitingWidget!,
-                entering: current,
-              );
-            }
             return Stack(children: [
               SlideTransition(position: slideOut, child: _exitingWidget),
               SlideTransition(position: slideIn, child: current),
@@ -154,97 +166,6 @@ class _HanapGawaAppState extends State<HanapGawaApp>
           return current;
         },
       ),
-    );
-  }
-}
-
-class _BookFlipTransition extends StatelessWidget {
-  const _BookFlipTransition({
-    required this.animation,
-    required this.exiting,
-    required this.entering,
-  });
-
-  final Animation<double> animation;
-  final Widget exiting;
-  final Widget entering;
-
-  @override
-  Widget build(BuildContext context) {
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeInOutCubic,
-    );
-
-    return AnimatedBuilder(
-      animation: curved,
-      builder: (context, _) {
-        final value = curved.value;
-        final exitingTurns = value <= 0.55 ? value / 0.55 : 1.0;
-        final enteringTurns = value <= 0.45 ? 0.0 : (value - 0.45) / 0.55;
-        final showEntering = value >= 0.5;
-
-        return ColoredBox(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          child: Stack(children: [
-            Positioned.fill(child: showEntering ? exiting : entering),
-            Positioned.fill(
-              child: showEntering
-                  ? _BookPage(
-                      angle: (1 - enteringTurns) * math.pi / 2,
-                      shadow: (1 - enteringTurns).clamp(0.0, 1.0),
-                      child: entering,
-                    )
-                  : _BookPage(
-                      angle: -exitingTurns * math.pi / 2,
-                      shadow: exitingTurns.clamp(0.0, 1.0),
-                      child: exiting,
-                    ),
-            ),
-          ]),
-        );
-      },
-    );
-  }
-}
-
-class _BookPage extends StatelessWidget {
-  const _BookPage({
-    required this.angle,
-    required this.shadow,
-    required this.child,
-  });
-
-  final double angle;
-  final double shadow;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform(
-      alignment: Alignment.centerLeft,
-      transform: Matrix4.identity()
-        ..setEntry(3, 2, 0.0018)
-        ..rotateY(angle),
-      child: Stack(children: [
-        Positioned.fill(child: child),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [
-                    Colors.black.withOpacity(0.08 * shadow),
-                    Colors.black.withOpacity(0.28 * shadow),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ]),
     );
   }
 }

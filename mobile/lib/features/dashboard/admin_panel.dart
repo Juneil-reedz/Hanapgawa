@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api/marketplace_api.dart';
@@ -45,6 +47,7 @@ enum _Tab {
   categories,
   monitoring,
   analytics,
+  feedback,
   ai;
 
   String get label => switch (this) {
@@ -54,6 +57,7 @@ enum _Tab {
         categories => 'Categories',
         monitoring => 'Monitoring',
         analytics => 'Analytics',
+        feedback => 'Feedback',
         ai => 'AI',
       };
 
@@ -64,6 +68,7 @@ enum _Tab {
         categories => Icons.category_outlined,
         monitoring => Icons.show_chart,
         analytics => Icons.bar_chart,
+        feedback => Icons.star_rate_outlined,
         ai => Icons.psychology,
       };
 }
@@ -352,6 +357,7 @@ class _AdminPanelState extends State<AdminPanel> {
             summary: widget.summary,
             reports: widget.reports,
           ),
+        _Tab.feedback => _FeedbackSection(api: widget.api),
         _Tab.ai => AdminAISection(
             api: widget.api,
             users: widget.users,
@@ -1537,4 +1543,147 @@ class _HealthRow extends StatelessWidget {
           ),
         ]),
       );
+}
+
+// ─── Feedback section ─────────────────────────────────────────────────────────
+
+class _FeedbackSection extends StatefulWidget {
+  const _FeedbackSection({required this.api});
+  final MarketplaceApi api;
+
+  @override
+  State<_FeedbackSection> createState() => _FeedbackSectionState();
+}
+
+class _FeedbackSectionState extends State<_FeedbackSection> {
+  var _loading = false;
+  var _refreshing = false;
+  var _feedback = <Map<String, dynamic>>[];
+  var _total = 0;
+  var _average = 0.0;
+  var _distribution = <Map<String, dynamic>>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (_feedback.isEmpty) setState(() => _loading = true);
+    setState(() => _refreshing = true);
+    try {
+      final data = await widget.api.getAdminFeedback();
+      if (mounted) {
+        setState(() {
+          _feedback = List<Map<String, dynamic>>.from(data['feedback'] as List? ?? []);
+          _total = data['total'] as int? ?? 0;
+          _average = (data['average'] as num?)?.toDouble() ?? 0.0;
+          _distribution = List<Map<String, dynamic>>.from(data['distribution'] as List? ?? []);
+          _loading = false;
+          _refreshing = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: Column(
+        children: [
+          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      AppCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 28),
+                              const SizedBox(width: 8),
+                              Text(_average.toStringAsFixed(1),
+                                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+                              const SizedBox(width: 8),
+                              Text('/ 5.0  ·  $_total ratings',
+                                  style: const TextStyle(color: Colors.black54)),
+                            ]),
+                            const SizedBox(height: 12),
+                            ...[5, 4, 3, 2, 1].map((star) {
+                              final entry = _distribution.firstWhere(
+                                  (d) => d['star'] == star,
+                                  orElse: () => {'star': star, 'count': 0});
+                              final count = entry['count'] as int? ?? 0;
+                              final pct = _total > 0 ? count / _total : 0.0;
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(children: [
+                                  Text('$star', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFC107)),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: pct, minHeight: 8,
+                                        backgroundColor: Colors.grey.shade200,
+                                        color: appPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(width: 28,
+                                      child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.black54))),
+                                ]),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (_feedback.isEmpty)
+                        const EmptyState(icon: Icons.star_outline, title: 'No feedback yet',
+                            subtitle: 'User feedback will appear here.')
+                      else
+                        ..._feedback.map((f) {
+                          final rating = f['rating'] as int? ?? 0;
+                          final comment = f['comment']?.toString() ?? '';
+                          final createdAt = parseDate(f['createdAt']);
+                          return AppCard(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(children: [
+                                  Row(children: List.generate(5, (i) => Icon(
+                                    i < rating ? Icons.star_rounded : Icons.star_outline_rounded,
+                                    size: 18,
+                                    color: i < rating ? const Color(0xFFFFC107) : Colors.grey.shade400,
+                                  ))),
+                                  const Spacer(),
+                                  Text(timeAgo(createdAt),
+                                      style: const TextStyle(color: Colors.black45, fontSize: 12)),
+                                ]),
+                                if (comment.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Text(comment, style: const TextStyle(fontSize: 14)),
+                                ],
+                              ],
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 }

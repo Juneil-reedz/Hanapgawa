@@ -2,3 +2,4 @@ node_modules/
 .env
 npm-debug.log*
 *.txt
+src/config/firebase-service-account.json

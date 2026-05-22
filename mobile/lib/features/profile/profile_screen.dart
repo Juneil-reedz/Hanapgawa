@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -21,6 +22,7 @@ import '../discover/feed_card.dart';
 import '../discover/provider_detail_screen.dart';
 import '../jobs/jobs_screen.dart';
 import '../../shared/widgets/info_pill.dart';
+import '../../shared/widgets/skeleton.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
@@ -66,7 +68,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   var _myJobPosts = <JobPost>[];
   var _reviews = <ReviewItem>[];
   var _bookingCount = 0;
-  var _loading = true;
+  var _loading = false;
+  var _refreshing = false;
   var _uploadingPic = false;
   var _uploadingCover = false;
   var _uploadingPhoto = false;
@@ -120,13 +123,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      if (_isAdmin) {
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
+    if (_isAdmin) return;
 
+    // 1. Load own profile from cache immediately
+    if (_isOwnProfile && _profileData == null) {
+      final myId = widget.api.storedUser?.id ?? '';
+      final cached = await LocalDb.instance.getCachedOwnProfile(myId);
+      if (cached != null && mounted) {
+        try {
+          setState(() {
+            _profileData = UserProfileData.fromJson(
+                cached['profileData'] as Map<String, dynamic>? ?? {});
+            _bookingCount = cached['bookingCount'] as int? ?? 0;
+            _posts = (cached['posts'] as List? ?? [])
+                .map((e) => SocialPost.fromJson(e as Map<String, dynamic>))
+                .toList();
+            _photos = (cached['photos'] as List? ?? [])
+                .map((e) => ProfilePhoto.fromJson(e as Map<String, dynamic>))
+                .toList();
+            _myJobPosts = (cached['jobPosts'] as List? ?? [])
+                .map((e) => JobPost.fromJson(e as Map<String, dynamic>))
+                .toList();
+            _reviews = (cached['reviews'] as List? ?? [])
+                .map((e) => ReviewItem.fromJson(e as Map<String, dynamic>))
+                .toList();
+          });
+        } catch (_) {
+          if (mounted) setState(() => _loading = true);
+        }
+      } else if (mounted) {
+        setState(() => _loading = true);
+      }
+    } else if (!_isOwnProfile && _visitedUserProfile == null) {
+      if (mounted) setState(() => _loading = true);
+    }
+    if (mounted) setState(() => _refreshing = true);
+
+    // 2. Fetch fresh from network
+    try {
       if (_isOwnProfile) {
         final myId = widget.api.storedUser?.id ?? '';
         final results = await Future.wait([
@@ -142,15 +176,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ]);
         if (mounted) {
           final allJobs = results[4] as List<JobPost>;
+          final profileData = results[0] as UserProfileData;
+          final bookings = results[1] as List<Booking>;
+          final posts = results[2] as List<SocialPost>;
+          final photos = results[3] as List<ProfilePhoto>;
+          final jobPosts = allJobs.where((j) => j.clientUserId == myId).toList();
+          final reviews = results[5] as List<ReviewItem>;
           setState(() {
-            _profileData = results[0] as UserProfileData;
-            _bookingCount = (results[1] as List<Booking>).length;
-            _posts = results[2] as List<SocialPost>;
-            _photos = results[3] as List<ProfilePhoto>;
-            _myJobPosts = allJobs.where((j) => j.clientUserId == myId).toList();
-            _reviews = results[5] as List<ReviewItem>;
+            _profileData = profileData;
+            _bookingCount = bookings.length;
+            _posts = posts;
+            _photos = photos;
+            _myJobPosts = jobPosts;
+            _reviews = reviews;
             _loading = false;
+            _refreshing = false;
           });
+          // Cache for next offline load
+          unawaited(LocalDb.instance.cacheOwnProfile(myId, {
+            'profileData': profileData.toJson(),
+            'bookingCount': bookings.length,
+            'posts': posts.map((p) => p.toJson()).toList(),
+            'photos': photos.map((p) => p.toJson()).toList(),
+            'jobPosts': jobPosts.map((j) => j.toJson()).toList(),
+            'reviews': reviews.map((r) => r.toJson()).toList(),
+          }));
         }
       } else {
         final results = await Future.wait([
@@ -162,8 +212,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ]);
         bool isFollowing = false;
         if (widget.api.token.isNotEmpty && !_isViewingAsAdmin) {
-          isFollowing =
-              await widget.api.checkIsFollowing(widget.viewingUserId!);
+          isFollowing = await widget.api.checkIsFollowing(widget.viewingUserId!);
         }
         if (mounted) {
           final vp = results[0] as UserProfile;
@@ -176,11 +225,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _reviews = results[4] as List<ReviewItem>;
             _isFollowing = isFollowing;
             _loading = false;
+            _refreshing = false;
           });
         }
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _refreshing = false; });
     }
   }
 
@@ -1069,7 +1119,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? null
           : AppBar(
               title: Text(_displayName.isEmpty ? 'Profile' : _displayName)),
-      body: SafeArea(
+      body: Column(
+        children: [
+          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+          Expanded(child: SafeArea(
         top: _isOwnProfile,
         bottom: false,
         child: RefreshIndicator(
@@ -1366,9 +1419,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 8),
                     if (_loading)
-                      const SizedBox(
-                          height: 80,
-                          child: Center(child: CircularProgressIndicator()))
+                      const SkeletonProfilePhotos()
                     else if (_photos.isEmpty)
                       Container(
                         height: 100,
@@ -1440,11 +1491,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    if (_loading)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: CircularProgressIndicator(),
-                      ),
+                    if (_loading) const SkeletonProfilePosts(),
                     if (!_loading && _posts.isEmpty)
                       EmptyState(
                           icon: Icons.newspaper_outlined,
@@ -1464,6 +1511,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
         ),
+      )),
+        ],
       ),
     );
     if (!_loggingOut) return screen;
@@ -1629,7 +1678,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       const SizedBox(height: 10),
       if (_loading)
-        const Center(child: CircularProgressIndicator())
+        const SkeletonProfileJobPosts()
       else if (jobPosts.isEmpty)
         Container(
           padding: const EdgeInsets.all(16),

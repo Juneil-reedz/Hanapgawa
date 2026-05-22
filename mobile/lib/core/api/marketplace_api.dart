@@ -11,6 +11,8 @@ class MarketplaceApi {
   static const _tokenKey = 'hanapgawa_token';
   static const _userKey = 'hanapgawa_user';
   static const _onboardingKey = 'hanapgawa_onboarding_seen';
+  static const _followSuggestionsKey = 'hanapgawa_follow_suggestions_seen';
+  static const _appTourKey = 'hanapgawa_app_tour_seen';
 
   late final SharedPreferences _prefs;
   SessionUser? storedUser;
@@ -25,6 +27,14 @@ class MarketplaceApi {
   bool get hasSeenOnboarding => _prefs.getBool(_onboardingKey) ?? false;
   void markOnboardingSeen() => _prefs.setBool(_onboardingKey, true);
   void clearOnboardingSeen() => _prefs.setBool(_onboardingKey, false);
+
+  bool get hasSeenFollowSuggestions =>
+      _prefs.getBool(_followSuggestionsKey) ?? false;
+  void markFollowSuggestionsSeen() =>
+      _prefs.setBool(_followSuggestionsKey, true);
+
+  bool get hasSeenAppTour => _prefs.getBool(_appTourKey) ?? false;
+  void markAppTourSeen() => _prefs.setBool(_appTourKey, true);
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -78,10 +88,28 @@ class MarketplaceApi {
     return listOf(json['items'], FeedItem.fromJson);
   }
 
+  Future<void> submitFeedback(int rating, String comment) async {
+    await _post('/feedback', {'rating': rating, 'comment': comment}, auth: true);
+  }
+
+  Future<Map<String, dynamic>> getAdminFeedback() async {
+    final json = await _get('/feedback', auth: true);
+    return json as Map<String, dynamic>;
+  }
+
   Future<List<UserSearchResult>> searchUsers(String query) async {
     if (query.trim().length < 2) return [];
     final json = await _get('/users/search', query: {'q': query.trim()});
     return listOf(json['users'], UserSearchResult.fromJson);
+  }
+
+  Future<List<UserSearchResult>> getSuggestedUsers({int limit = 20}) async {
+    try {
+      final json = await _get('/users/suggested', auth: true, query: {'limit': '$limit'});
+      return listOf(json['users'], UserSearchResult.fromJson);
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<UserProfile> getUserProfile(String userId) async {
