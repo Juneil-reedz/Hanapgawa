@@ -101,11 +101,10 @@ async function setNickname({ conversationId, targetUserId, nickname, auth }) {
   const trimmed = (nickname || '').trim();
   if (!trimmed) {
     await deleteConversationNickname(conversationId, targetUserId);
-    // System message for clearing
     const setter = await findUserById(auth.sub);
     await addSystemMessage({
       conversationId,
-      message: `${setter?.full_name || 'Someone'} cleared ${target.full_name}'s nickname.`,
+      message: `${setter?.fullName || 'Someone'} cleared ${target.fullName || target.email}'s nickname.`,
     });
     return null;
   }
@@ -114,7 +113,7 @@ async function setNickname({ conversationId, targetUserId, nickname, auth }) {
   const setter = await findUserById(auth.sub);
   await addSystemMessage({
     conversationId,
-    message: `${setter?.full_name || 'Someone'} set ${target.full_name}'s nickname to "${trimmed}".`,
+    message: `${setter?.fullName || 'Someone'} set ${target.fullName || target.email}'s nickname to "${trimmed}".`,
   });
   return result;
 }

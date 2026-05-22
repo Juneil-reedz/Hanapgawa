@@ -16,12 +16,13 @@ function requirePostgresRead() {
 async function createConversation({ clientUserId, providerUserId, serviceListingId, bookingId, initialMessage }) {
   const pool = requirePostgres();
   const conversation = await pool.query(
-    `INSERT INTO conversations (client_user_id, provider_user_id, service_listing_id, booking_id, last_message_preview)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO conversations (client_user_id, provider_user_id, service_listing_id, booking_id, last_message_preview, last_sender_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, client_user_id AS "clientUserId", provider_user_id AS "providerUserId",
        service_listing_id AS "serviceListingId", booking_id AS "bookingId",
-       last_message_preview AS "lastMessagePreview", created_at AS "createdAt", updated_at AS "updatedAt"`,
-    [clientUserId, providerUserId, serviceListingId || null, bookingId || null, initialMessage.slice(0, 140)],
+       last_message_preview AS "lastMessagePreview", last_sender_id AS "lastSenderId",
+       created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [clientUserId, providerUserId, serviceListingId || null, bookingId || null, initialMessage.slice(0, 140), clientUserId],
   );
   const message = await pool.query(
     `INSERT INTO conversation_messages (conversation_id, sender_user_id, message)

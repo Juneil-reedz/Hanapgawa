@@ -75,6 +75,9 @@ class _BookingsScreenState extends State<BookingsScreen> {
 
   bool _isUnread(Conversation conv) {
     if (!_initialLoadDone) return false;
+    // Never highlight as unread when the current user sent the last message.
+    final myId = widget.api.storedUser?.id ?? '';
+    if (conv.lastSenderId != null && conv.lastSenderId == myId) return false;
     final seen = _lastSeen[conv.id];
     if (seen == null) return true;
     return conv.updatedAt.isAfter(seen);
@@ -198,6 +201,14 @@ class _BookingsScreenState extends State<BookingsScreen> {
         if (!_initialLoadDone) {
           for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
           _initialLoadDone = true;
+        } else {
+          // Subsequent reload: auto-mark as seen where we sent the last message.
+          final myId = widget.api.storedUser?.id ?? '';
+          for (final c in convs) {
+            if (c.lastSenderId == myId) {
+              _lastSeen[c.id] = c.updatedAt;
+            }
+          }
         }
       });
     } catch (error) {
@@ -219,7 +230,19 @@ class _BookingsScreenState extends State<BookingsScreen> {
         unawaited(LocalDb.instance
             .cacheConversations(list.map((c) => c.toJson()).toList()));
       }
-      if (mounted) setState(() => _conversations = list);
+      if (mounted) {
+        setState(() {
+          _conversations = list;
+          // Auto-mark as seen conversations where the current user sent the last
+          // message — they can never be "new" to the sender.
+          final myId = widget.api.storedUser?.id ?? '';
+          for (final c in list) {
+            if (c.lastSenderId == myId) {
+              _lastSeen[c.id] = c.updatedAt;
+            }
+          }
+        });
+      }
     } catch (_) {
       if (search.isEmpty && mounted) {
         final cached = await LocalDb.instance.getCachedConversations();
