@@ -91,16 +91,15 @@ class _JobsScreenState extends State<JobsScreen> {
           _allJobs = jobs;
           _reviews = reviews;
           _reports = reports;
-          _activeBookings = bookings
-              .where((b) => activeStatuses.contains(b.status))
-              .toList();
+          _activeBookings =
+              bookings.where((b) => activeStatuses.contains(b.status)).toList();
           _myWorkerProfile = profile;
           _message = '';
           _loading = false;
         });
         // Cache for offline use
-        unawaited(LocalDb.instance
-            .cacheJobs(jobs.map((j) => j.toJson()).toList()));
+        unawaited(
+            LocalDb.instance.cacheJobs(jobs.map((j) => j.toJson()).toList()));
       }
     } catch (error) {
       if (!mounted) return;
@@ -166,13 +165,16 @@ class _JobsScreenState extends State<JobsScreen> {
   List<JobPost> get _recommendedJobs {
     final profile = _myWorkerProfile;
     if (profile == null) return const [];
-    final scored = _browsePosts.map((job) {
-      int score = 0;
-      if (job.category == profile.category) score += 50;
-      if (job.municipality == profile.municipality) score += 30;
-      if ((job.budgetMin ?? 0) > 0) score += 10;
-      return (job: job, score: score);
-    }).where((e) => e.score >= 50).toList()
+    final scored = _browsePosts
+        .map((job) {
+          int score = 0;
+          if (job.category == profile.category) score += 50;
+          if (job.municipality == profile.municipality) score += 30;
+          if ((job.budgetMin ?? 0) > 0) score += 10;
+          return (job: job, score: score);
+        })
+        .where((e) => e.score >= 50)
+        .toList()
       ..sort((a, b) => b.score.compareTo(a.score));
     return scored.take(3).map((e) => e.job).toList();
   }
@@ -369,35 +371,35 @@ class _JobsScreenState extends State<JobsScreen> {
                         : null,
                   ),
                 ..._browsePosts.map((job) {
-                      final bStatus = _bookingStatusFor(job);
-                      return _JobCard(
-                        job: job,
-                        isOwner: false,
-                        onTap: () => _openJobDetail(job),
-                        bookingStatus: bStatus,
-                        onReport: !widget.readOnly && widget.api.token.isNotEmpty
-                            ? () => showReportSheet(context,
+                  final bStatus = _bookingStatusFor(job);
+                  return _JobCard(
+                    job: job,
+                    isOwner: false,
+                    onTap: () => _openJobDetail(job),
+                    bookingStatus: bStatus,
+                    onReport: !widget.readOnly && widget.api.token.isNotEmpty
+                        ? () => showReportSheet(context,
+                            api: widget.api,
+                            reportedUserId: job.clientUserId,
+                            contentLabel: 'this job post')
+                        : null,
+                    // Hide Book Now if there's already an active booking or in read-only (admin) mode
+                    onBook: !widget.readOnly &&
+                            job.postType == 'offering_service' &&
+                            job.allowDirectBooking &&
+                            widget.api.token.isNotEmpty &&
+                            bStatus == null
+                        ? () => showModalBottomSheet<void>(
+                              context: context,
+                              isScrollControlled: true,
+                              builder: (_) => BookingSheet(
                                 api: widget.api,
-                                reportedUserId: job.clientUserId,
-                                contentLabel: 'this job post')
-                            : null,
-                        // Hide Book Now if there's already an active booking or in read-only (admin) mode
-                        onBook: !widget.readOnly &&
-                                job.postType == 'offering_service' &&
-                                job.allowDirectBooking &&
-                                widget.api.token.isNotEmpty &&
-                                bStatus == null
-                            ? () => showModalBottomSheet<void>(
-                                  context: context,
-                                  isScrollControlled: true,
-                                  builder: (_) => BookingSheet(
-                                    api: widget.api,
-                                    target: BookingTarget.fromJobPost(job),
-                                  ),
-                                )
-                            : null,
-                      );
-                    }),
+                                target: BookingTarget.fromJobPost(job),
+                              ),
+                            )
+                        : null,
+                  );
+                }),
               ],
               if (_segment == 1) ...[
                 if (_myPosts.isEmpty)
@@ -410,7 +412,9 @@ class _JobsScreenState extends State<JobsScreen> {
                       job: job,
                       isOwner: true,
                       onTap: () => _openJobDetail(job),
-                      onEdit: job.status == 'open' ? () => _openCreateSheet(editPost: job) : null,
+                      onEdit: job.status == 'open'
+                          ? () => _openCreateSheet(editPost: job)
+                          : null,
                       onDelete: job.status != 'open'
                           ? () async {
                               if (!SyncService.instance.isOnline) {
@@ -424,7 +428,8 @@ class _JobsScreenState extends State<JobsScreen> {
                                 } catch (e) {
                                   if (SyncService.isNetworkError(e)) {
                                     await LocalDb.instance.queueAction(
-                                        'delete_job_post', {'jobPostId': job.id});
+                                        'delete_job_post',
+                                        {'jobPostId': job.id});
                                     _load();
                                   }
                                 }
@@ -766,7 +771,8 @@ class _JobCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
-      accentColor: job.postType == 'offering_service' ? appPrimary : Colors.green,
+      accentColor:
+          job.postType == 'offering_service' ? appPrimary : Colors.green,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
@@ -780,8 +786,7 @@ class _JobCard extends StatelessWidget {
             if (bookingStatus != null)
               Container(
                 margin: const EdgeInsets.only(right: 6),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: Colors.orange.withAlpha(22),
                   borderRadius: BorderRadius.circular(20),
@@ -833,8 +838,12 @@ class _JobCard extends StatelessWidget {
           Wrap(spacing: 12, runSpacing: 8, children: [
             InfoPill(icon: Icons.work_outline, label: job.category),
             InfoPill(icon: Icons.place_outlined, label: job.municipality),
-            if (job.offerCount > 0)
-              _OfferCountPill(count: job.offerCount),
+            if (job.postType == 'looking_for_worker')
+              InfoPill(
+                icon: Icons.groups_outlined,
+                label: '${job.acceptedOfferCount}/${job.workersNeeded} workers',
+              ),
+            if (job.offerCount > 0) _OfferCountPill(count: job.offerCount),
             if ((job.budgetMin ?? 0) > 0)
               InfoPill(
                   icon: Icons.payments_outlined,
@@ -996,14 +1005,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         });
       }
       // Load worker recommendations if this is the owner of a looking_for_worker post
-      if (_isOwner && _job.postType != 'offering_service' && _job.status == 'open') {
+      if (_isOwner &&
+          _job.postType != 'offering_service' &&
+          _job.status == 'open') {
         try {
           final workers =
               await widget.api.searchProviders(category: _job.category);
           workers.sort((a, b) => _workerScore(b).compareTo(_workerScore(a)));
           if (mounted) {
-            setState(() =>
-                _recommendedWorkers = workers.take(5).toList());
+            setState(() => _recommendedWorkers = workers.take(5).toList());
           }
         } catch (_) {}
       }
@@ -1093,8 +1103,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                   color: Colors.green.withAlpha(15),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Text(
-                  'A booking will be automatically created and other offers will be declined.',
+                child: Text(
+                  _job.acceptedOfferCount + 1 >= _job.workersNeeded
+                      ? 'A booking will be created. This fills the worker slots, so the job will close.'
+                      : 'A booking will be created. The job stays open until ${_job.workersNeeded} workers are accepted.',
                   style: TextStyle(color: Colors.green, fontSize: 13),
                 ),
               ),
@@ -1137,8 +1149,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(friendlyError(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     }
   }
 
@@ -1168,8 +1180,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(friendlyError(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     }
   }
 
@@ -1193,7 +1205,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     );
     if (confirmed != true || !mounted) return;
     if (!SyncService.instance.isOnline) {
-      await LocalDb.instance.queueAction('delete_job_post', {'jobPostId': _job.id});
+      await LocalDb.instance
+          .queueAction('delete_job_post', {'jobPostId': _job.id});
       if (!mounted) return;
       widget.onRefresh();
       Navigator.pop(context);
@@ -1214,7 +1227,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('delete_job_post', {'jobPostId': _job.id});
+        await LocalDb.instance
+            .queueAction('delete_job_post', {'jobPostId': _job.id});
         if (!mounted) return;
         widget.onRefresh();
         Navigator.pop(context);
@@ -1227,8 +1241,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           backgroundColor: Colors.orange,
         ));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -1395,6 +1409,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                           _DetailChip(
                               icon: Icons.place_outlined,
                               label: _job.municipality),
+                          if (_job.postType == 'looking_for_worker')
+                            _DetailChip(
+                              icon: Icons.groups_outlined,
+                              label:
+                                  '${_job.acceptedOfferCount}/${_job.workersNeeded} workers accepted',
+                              highlight: true,
+                              highlightColor: Colors.green,
+                            ),
                           if ((_job.budgetMin ?? 0) > 0)
                             _DetailChip(
                                 icon: Icons.payments_outlined,
@@ -1415,6 +1437,34 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                         ]),
 
                         const SizedBox(height: 20),
+
+                        if (_isOwner && _job.acceptedWorkers.isNotEmpty) ...[
+                          AppCard(
+                            accentColor: Colors.green,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Accepted Workers',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 16)),
+                                const SizedBox(height: 8),
+                                ..._job.acceptedWorkers
+                                    .map((worker) => ListTile(
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: const CircleAvatar(
+                                              child:
+                                                  Icon(Icons.person_outline)),
+                                          title: Text(
+                                              worker['name']?.toString() ??
+                                                  'Worker'),
+                                        )),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
 
                         if (widget.readOnly) ...[
                           AppCard(
@@ -1697,18 +1747,14 @@ class _AIWorkerRecommendationCard extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                    color: rank == 1
-                        ? appPrimary.withAlpha(80)
-                        : appBorder),
+                    color: rank == 1 ? appPrimary.withAlpha(80) : appBorder),
               ),
               child: Row(children: [
                 Container(
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
-                    color: rank == 1
-                        ? appAccent
-                        : appBorder,
+                    color: rank == 1 ? appAccent : appBorder,
                     shape: BoxShape.circle,
                   ),
                   child: Center(
@@ -1726,8 +1772,7 @@ class _AIWorkerRecommendationCard extends StatelessWidget {
                       children: [
                         Text(w.name,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14)),
+                                fontWeight: FontWeight.w800, fontSize: 14)),
                         const SizedBox(height: 2),
                         Row(children: [
                           const Icon(Icons.star,
@@ -1737,16 +1782,16 @@ class _AIWorkerRecommendationCard extends StatelessWidget {
                             stars > 0
                                 ? '${stars.toStringAsFixed(1)} · $reviewCount review${reviewCount == 1 ? '' : 's'}'
                                 : 'No reviews yet',
-                            style: const TextStyle(
-                                color: appMuted, fontSize: 12),
+                            style:
+                                const TextStyle(color: appMuted, fontSize: 12),
                           ),
                         ]),
                       ]),
                 ),
                 if (rank == 1)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: appAccent,
                       borderRadius: BorderRadius.circular(20),
@@ -1823,8 +1868,7 @@ class _AIJobRecommendationBanner extends StatelessWidget {
                           children: [
                             Text(job.title,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 14)),
+                                    fontWeight: FontWeight.w800, fontSize: 14)),
                             const SizedBox(height: 3),
                             Row(children: [
                               const Icon(Icons.place_outlined,
@@ -1847,8 +1891,7 @@ class _AIJobRecommendationBanner extends StatelessWidget {
                             ]),
                           ]),
                     ),
-                    const Icon(Icons.chevron_right,
-                        size: 18, color: appMuted),
+                    const Icon(Icons.chevron_right, size: 18, color: appMuted),
                   ]),
                 ),
               )),
@@ -1860,7 +1903,10 @@ class _AIJobRecommendationBanner extends StatelessWidget {
 
 class _DetailChip extends StatelessWidget {
   const _DetailChip(
-      {required this.icon, required this.label, this.highlight = false, this.highlightColor});
+      {required this.icon,
+      required this.label,
+      this.highlight = false,
+      this.highlightColor});
   final IconData icon;
   final String label;
   final bool highlight;
@@ -1874,8 +1920,7 @@ class _DetailChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: highlight ? color.withAlpha(20) : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: highlight ? color.withAlpha(80) : appBorder),
+        border: Border.all(color: highlight ? color.withAlpha(80) : appBorder),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 14, color: highlight ? color : appPrimary),
@@ -1955,8 +2000,8 @@ class _StartChatFromJobState extends State<_StartChatFromJob> {
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
         Navigator.pop(context);
       }
     }
@@ -2045,8 +2090,8 @@ class _SendOfferSheetState extends State<_SendOfferSheet> {
       widget.onSent();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(error))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(error))));
         setState(() => _sending = false);
       }
     }
@@ -2118,6 +2163,7 @@ class _JobPostSheetState extends State<_JobPostSheet> {
   late final TextEditingController _description;
   late final TextEditingController _budgetMin;
   late final TextEditingController _budgetMax;
+  late final TextEditingController _workersNeeded;
   late String _municipality;
   late String _postType;
   late bool _allowDirectBooking;
@@ -2135,6 +2181,8 @@ class _JobPostSheetState extends State<_JobPostSheet> {
         TextEditingController(text: post?.budgetMin?.toString() ?? '500');
     _budgetMax =
         TextEditingController(text: post?.budgetMax?.toString() ?? '2500');
+    _workersNeeded =
+        TextEditingController(text: (post?.workersNeeded ?? 1).toString());
     _municipality = post?.municipality ?? 'Bongao';
     _postType = post?.postType ?? 'looking_for_worker';
     _allowDirectBooking = post?.allowDirectBooking ?? false;
@@ -2148,6 +2196,7 @@ class _JobPostSheetState extends State<_JobPostSheet> {
     _description.dispose();
     _budgetMin.dispose();
     _budgetMax.dispose();
+    _workersNeeded.dispose();
     super.dispose();
   }
 
@@ -2163,6 +2212,7 @@ class _JobPostSheetState extends State<_JobPostSheet> {
       description: _description.text.trim(),
       budgetMin: int.tryParse(_budgetMin.text),
       budgetMax: int.tryParse(_budgetMax.text),
+      workersNeeded: int.tryParse(_workersNeeded.text) ?? 1,
       allowDirectBooking:
           _postType == 'offering_service' ? _allowDirectBooking : false,
     );
@@ -2175,10 +2225,12 @@ class _JobPostSheetState extends State<_JobPostSheet> {
       'description': payload.description,
       if (payload.budgetMin != null) 'budgetMin': payload.budgetMin,
       if (payload.budgetMax != null) 'budgetMax': payload.budgetMax,
+      'workersNeeded': payload.workersNeeded,
       'allowDirectBooking': payload.allowDirectBooking,
       if (widget.editPost != null) 'jobPostId': widget.editPost!.id,
     };
-    final actionType = widget.editPost != null ? 'update_job_post' : 'create_job_post';
+    final actionType =
+        widget.editPost != null ? 'update_job_post' : 'create_job_post';
 
     if (!SyncService.instance.isOnline) {
       await LocalDb.instance.queueAction(actionType, actionPayload);
@@ -2212,7 +2264,8 @@ class _JobPostSheetState extends State<_JobPostSheet> {
             content: Row(children: [
               Icon(Icons.sync, color: Colors.white, size: 16),
               SizedBox(width: 8),
-              Expanded(child: Text('Job post queued — will submit when online')),
+              Expanded(
+                  child: Text('Job post queued — will submit when online')),
             ]),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
@@ -2277,8 +2330,10 @@ class _JobPostSheetState extends State<_JobPostSheet> {
                       label: Text('Looking for client')),
                 ],
                 selected: {_postType},
-                onSelectionChanged: (value) =>
-                    setInner(() => _postType = value.first),
+                onSelectionChanged: (value) {
+                  setInner(() => _postType = value.first);
+                  setState(() => _postType = value.first);
+                },
               ),
             ),
             const SizedBox(height: 12),
@@ -2290,15 +2345,30 @@ class _JobPostSheetState extends State<_JobPostSheet> {
               initialValue: TextEditingValue(text: _category.text),
               optionsBuilder: (value) {
                 const suggestions = [
-                  'Carpentry', 'Plumbing', 'Electrical', 'Cleaning',
-                  'Home Repair', 'Painting', 'Landscaping', 'Tutoring',
-                  'Beauty & Wellness', 'Security', 'Delivery', 'Food Service',
-                  'Fitness', 'Computer & Tech', 'Car Repair', 'Pet Care',
-                  'Medical Aide', 'Photography', 'Tailoring', 'General Labor',
+                  'Carpentry',
+                  'Plumbing',
+                  'Electrical',
+                  'Cleaning',
+                  'Home Repair',
+                  'Painting',
+                  'Landscaping',
+                  'Tutoring',
+                  'Beauty & Wellness',
+                  'Security',
+                  'Delivery',
+                  'Food Service',
+                  'Fitness',
+                  'Computer & Tech',
+                  'Car Repair',
+                  'Pet Care',
+                  'Medical Aide',
+                  'Photography',
+                  'Tailoring',
+                  'General Labor',
                 ];
                 if (value.text.isEmpty) return suggestions;
-                return suggestions.where((s) =>
-                    s.toLowerCase().contains(value.text.toLowerCase()));
+                return suggestions.where(
+                    (s) => s.toLowerCase().contains(value.text.toLowerCase()));
               },
               onSelected: (val) => _category.text = val,
               fieldViewBuilder: (context, ctrl, focusNode, onSubmitted) {
@@ -2324,6 +2394,18 @@ class _JobPostSheetState extends State<_JobPostSheet> {
               ),
             ),
             const SizedBox(height: 10),
+            if (_postType == 'looking_for_worker') ...[
+              TextField(
+                controller: _workersNeeded,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'How many workers do you need?',
+                  helperText:
+                      'The job stays open until this many offers are accepted.',
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             TextField(
                 controller: _location,
                 decoration:
@@ -2427,9 +2509,7 @@ class _OfferCountPill extends StatelessWidget {
           Text(
             '$count ${count == 1 ? 'offer' : 'offers'}',
             style: TextStyle(
-                color: appPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700),
+                color: appPrimary, fontSize: 12, fontWeight: FontWeight.w700),
           ),
         ]),
       );
@@ -2607,7 +2687,8 @@ class _OfferDetailCard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onDecline,
                 icon: const Icon(Icons.close, size: 16, color: Colors.red),
-                label: const Text('Decline', style: TextStyle(color: Colors.red)),
+                label:
+                    const Text('Decline', style: TextStyle(color: Colors.red)),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   side: const BorderSide(color: Colors.red),

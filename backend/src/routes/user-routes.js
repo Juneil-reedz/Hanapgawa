@@ -186,16 +186,18 @@ router.put(
     const pool = getPostgresPool();
     if (!pool) throw new HttpError(503, 'Database unavailable.');
 
+    const hasProfilePic = Object.prototype.hasOwnProperty.call(req.body, 'profilePic');
+    const hasCoverPic = Object.prototype.hasOwnProperty.call(req.body, 'coverPic');
     const { profilePic, coverPic } = req.body;
 
     await pool.query(
       `INSERT INTO user_profiles (user_id, profile_pic, cover_pic, updated_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
-         profile_pic = COALESCE(EXCLUDED.profile_pic, user_profiles.profile_pic),
-         cover_pic = COALESCE(EXCLUDED.cover_pic, user_profiles.cover_pic),
+         profile_pic = CASE WHEN $4 THEN EXCLUDED.profile_pic ELSE user_profiles.profile_pic END,
+         cover_pic = CASE WHEN $5 THEN EXCLUDED.cover_pic ELSE user_profiles.cover_pic END,
          updated_at = NOW()`,
-      [req.auth.sub, profilePic ?? null, coverPic ?? null],
+      [req.auth.sub, profilePic ?? null, coverPic ?? null, hasProfilePic, hasCoverPic],
     );
 
     res.json({ ok: true });

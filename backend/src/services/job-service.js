@@ -28,7 +28,7 @@ async function getJobs({ auth, status }) {
 }
 
 async function getJobDetail({ jobPostId, auth }) {
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) {
     throw new HttpError(404, 'Job post not found.');
   }
@@ -42,7 +42,7 @@ async function getJobDetail({ jobPostId, auth }) {
 }
 
 async function editJob({ jobPostId, auth, ...payload }) {
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) {
     throw new HttpError(404, 'Job post not found.');
   }
@@ -63,7 +63,7 @@ async function editJob({ jobPostId, auth, ...payload }) {
 }
 
 async function removeJob({ jobPostId, auth }) {
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) {
     throw new HttpError(404, 'Job post not found.');
   }
@@ -85,7 +85,7 @@ async function sendOffer({ jobPostId, auth, message, proposedPrice, media }) {
     throw new HttpError(404, 'User not found.');
   }
 
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) {
     throw new HttpError(404, 'Job post not found.');
   }
@@ -110,7 +110,7 @@ async function getMyOffers(auth) {
 }
 
 async function chooseOffer({ jobPostId, offerId, auth }) {
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) {
     throw new HttpError(404, 'Job post not found.');
   }
@@ -120,7 +120,7 @@ async function chooseOffer({ jobPostId, offerId, auth }) {
   }
 
   if (jobPost.status !== 'open') {
-    throw new HttpError(409, 'This job is no longer open.');
+    throw new HttpError(409, 'This job already has enough accepted workers.');
   }
 
   const existingOffer = await findJobOfferById(offerId);
@@ -151,7 +151,7 @@ async function chooseOffer({ jobPostId, offerId, auth }) {
 }
 
 async function rejectOffer({ jobPostId, offerId, auth }) {
-  const jobPost = await findJobPostById(jobPostId);
+  const jobPost = await findJobPostById(jobPostId, { userId: auth.sub, role: auth.role });
   if (!jobPost) throw new HttpError(404, 'Job post not found.');
   if (auth.role === 'admin' || jobPost.clientUserId !== auth.sub) {
     throw new HttpError(403, 'Only the job owner can decline an offer.');

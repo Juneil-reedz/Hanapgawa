@@ -205,6 +205,7 @@ class SyncService {
           description: p['description'] as String? ?? '',
           budgetMin: p['budgetMin'] as int?,
           budgetMax: p['budgetMax'] as int?,
+          workersNeeded: p['workersNeeded'] as int? ?? 1,
           allowDirectBooking: p['allowDirectBooking'] as bool? ?? false,
         ));
 
@@ -220,6 +221,7 @@ class SyncService {
             description: p['description'] as String? ?? '',
             budgetMin: p['budgetMin'] as int?,
             budgetMax: p['budgetMax'] as int?,
+            workersNeeded: p['workersNeeded'] as int? ?? 1,
             allowDirectBooking: p['allowDirectBooking'] as bool? ?? false,
           ),
         );

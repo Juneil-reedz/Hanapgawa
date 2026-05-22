@@ -139,6 +139,7 @@ const repostSchema = z.object({
   municipality: z.string().min(2).max(80),
   locationDetails: z.string().max(240).optional().default(''),
   description: z.preprocess((v) => (String(v || '').trim() || 'No details provided.'), z.string().min(3).max(1500)),
+  workersNeeded: z.coerce.number().int().min(1).max(50).default(1),
 });
 
 router.post(

@@ -540,6 +540,9 @@ class JobPost {
     required this.status,
     required this.offerCount,
     this.pendingOfferCount = 0,
+    this.acceptedOfferCount = 0,
+    this.workersNeeded = 1,
+    this.acceptedWorkers = const [],
     required this.createdAt,
     this.allowDirectBooking = false,
   });
@@ -558,6 +561,9 @@ class JobPost {
   final String status;
   final int offerCount;
   final int pendingOfferCount;
+  final int acceptedOfferCount;
+  final int workersNeeded;
+  final List<Map<String, dynamic>> acceptedWorkers;
   final DateTime createdAt;
   final bool allowDirectBooking;
 
@@ -579,6 +585,12 @@ class JobPost {
         status: json['status']?.toString() ?? 'open',
         offerCount: asInt(json['offerCount']),
         pendingOfferCount: asInt(json['pendingOfferCount']),
+        acceptedOfferCount: asInt(json['acceptedOfferCount']),
+        workersNeeded: asInt(json['workersNeeded']) <= 0
+            ? 1
+            : asInt(json['workersNeeded']),
+        acceptedWorkers: listOf(
+            json['acceptedWorkers'], (m) => Map<String, dynamic>.from(m)),
         createdAt: parseDate(json['createdAt']),
         allowDirectBooking: json['allowDirectBooking'] == true,
       );
@@ -599,6 +611,9 @@ class JobPost {
         'status': status,
         'offerCount': offerCount,
         'pendingOfferCount': pendingOfferCount,
+        'acceptedOfferCount': acceptedOfferCount,
+        'workersNeeded': workersNeeded,
+        'acceptedWorkers': acceptedWorkers,
         'createdAt': createdAt.toIso8601String(),
         'allowDirectBooking': allowDirectBooking,
       };
@@ -1139,6 +1154,7 @@ class JobPostPayload {
     required this.description,
     this.budgetMin,
     this.budgetMax,
+    this.workersNeeded = 1,
     this.allowDirectBooking = false,
   });
   final String postType;
@@ -1149,6 +1165,7 @@ class JobPostPayload {
   final String description;
   final int? budgetMin;
   final int? budgetMax;
+  final int workersNeeded;
   final bool allowDirectBooking;
   Map<String, dynamic> toJson() => {
         'postType': postType,
@@ -1159,6 +1176,7 @@ class JobPostPayload {
         'description': description,
         if (budgetMin != null) 'budgetMin': budgetMin,
         if (budgetMax != null) 'budgetMax': budgetMax,
+        'workersNeeded': workersNeeded,
         'allowDirectBooking': allowDirectBooking,
       };
 }

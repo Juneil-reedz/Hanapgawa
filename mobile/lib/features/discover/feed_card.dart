@@ -2162,9 +2162,9 @@ class _PostMediaGrid extends StatelessWidget {
         itemBuilder: (context, index) => SizedBox(
           width: width.clamp(240.0, 420.0),
           child: Stack(
-            fit: StackFit.expand,
+            alignment: Alignment.center,
             children: [
-              _cell(items[index]),
+              Positioned.fill(child: _cell(items[index])),
               Positioned(
                 top: 8,
                 right: 8,
@@ -2239,6 +2239,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   VoidCallback? _scrollListener;
   bool _initialized = false;
   bool _error = false;
+  bool _loading = false;
   bool _muted = false;
 
   @override
@@ -2251,10 +2252,11 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       cached.touch();
       _attachPlaybackMonitor(cached.controller);
     }
-    _init();
   }
 
   Future<void> _init() async {
+    if (_loading || _initialized) return;
+    if (mounted) setState(() => _loading = true);
     try {
       final v = widget.base64Video;
       final ctrl = await _controllerFor(v);
@@ -2264,12 +2266,33 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
         setState(() {
           _controller = ctrl;
           _initialized = true;
+          _loading = false;
         });
       }
     } catch (e) {
       debugPrint('[VideoPlayer] init error: $e');
-      if (mounted) setState(() => _error = true);
+      if (mounted) {
+        setState(() {
+          _error = true;
+          _loading = false;
+        });
+      }
     }
+  }
+
+  Future<void> _play() async {
+    if (!_initialized || _controller == null) {
+      await _init();
+    }
+    final ctrl = _controller;
+    if (!mounted || ctrl == null) return;
+    final active = _activeVideoController;
+    if (active != null && !identical(active, ctrl)) {
+      active.pause();
+    }
+    _activeVideoController = ctrl;
+    widget.onPlay?.call();
+    await ctrl.play();
   }
 
   @override
@@ -2401,14 +2424,28 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       );
     }
     if (!_initialized || _controller == null) {
-      return Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(12),
+      return GestureDetector(
+        onTap: _play,
+        child: Container(
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Center(
+            child: _loading
+                ? const CircularProgressIndicator(color: Colors.white)
+                : Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: const Icon(Icons.play_arrow,
+                        color: Colors.white, size: 40),
+                  ),
+          ),
         ),
-        child:
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
     final ctrl = _controller!;
@@ -2428,13 +2465,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                 if (value.isPlaying) {
                   ctrl.pause();
                 } else {
-                  final active = _activeVideoController;
-                  if (active != null && !identical(active, ctrl)) {
-                    active.pause();
-                  }
-                  _activeVideoController = ctrl;
-                  widget.onPlay?.call();
-                  ctrl.play();
+                  _play();
                 }
               },
               child: Container(

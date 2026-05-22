@@ -19,6 +19,7 @@ const jobPostSchema = z.object({
   description: z.preprocess((value) => (String(value || '').trim() || 'No additional details provided.'), z.string().min(3).max(1500)),
   budgetMin: z.coerce.number().min(0).optional(),
   budgetMax: z.coerce.number().min(0).optional(),
+  workersNeeded: z.coerce.number().int().min(1).max(50).default(1),
   scheduledAt: z.iso.datetime().optional(),
   allowDirectBooking: z.boolean().default(false),
 });
@@ -258,7 +259,7 @@ router.patch(
     // Also reset any accepted/pending offers back to pending so workers can re-offer
     await pool.query(
       `UPDATE job_offers SET status = 'pending', updated_at = NOW()
-       WHERE job_post_id = $1 AND status IN ('accepted', 'declined')`,
+       WHERE job_post_id = $1 AND status IN ('accepted', 'rejected')`,
       [jobPostId.data],
     );
 

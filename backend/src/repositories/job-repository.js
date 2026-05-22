@@ -25,6 +25,17 @@ const jobSelect = `
   jp.description,
   jp.budget_min AS "budgetMin",
   jp.budget_max AS "budgetMax",
+  jp.workers_needed AS "workersNeeded",
+  (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id AND offers.status = 'accepted') AS "acceptedOfferCount",
+  CASE
+    WHEN jp.client_user_id = $1 OR $2 = 'admin' THEN COALESCE((
+      SELECT json_agg(json_build_object('id', u.id, 'name', u.full_name) ORDER BY offers.updated_at)
+      FROM job_offers offers
+      JOIN users u ON u.id = offers.provider_user_id
+      WHERE offers.job_post_id = jp.id AND offers.status = 'accepted'
+    ), '[]'::json)
+    ELSE '[]'::json
+  END AS "acceptedWorkers",
   jp.allow_direct_booking AS "allowDirectBooking",
   jp.status,
   (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id) AS "offerCount",
@@ -49,7 +60,7 @@ const offerSelect = `
   jo.updated_at AS "updatedAt"
 `;
 
-async function createJobPost({ clientUserId, postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, scheduledAt, allowDirectBooking }) {
+async function createJobPost({ clientUserId, postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, workersNeeded, scheduledAt, allowDirectBooking }) {
   const pool = requirePostgres();
   const result = await pool.query(
     `
@@ -63,10 +74,11 @@ async function createJobPost({ clientUserId, postType, title, category, municipa
         description,
         budget_min,
         budget_max,
+        workers_needed,
         scheduled_at,
         allow_direct_booking
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING
         id,
         client_user_id AS "clientUserId",
@@ -78,21 +90,25 @@ async function createJobPost({ clientUserId, postType, title, category, municipa
         description,
         budget_min AS "budgetMin",
         budget_max AS "budgetMax",
+        workers_needed AS "workersNeeded",
         allow_direct_booking AS "allowDirectBooking",
         status,
         0 AS "offerCount",
+        0 AS "pendingOfferCount",
+        0 AS "acceptedOfferCount",
+        '[]'::json AS "acceptedWorkers",
         assigned_provider_user_id AS "assignedProviderUserId",
         scheduled_at AS "scheduledAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `,
-    [clientUserId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, scheduledAt || null, allowDirectBooking ?? false],
+    [clientUserId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, workersNeeded || 1, scheduledAt || null, allowDirectBooking ?? false],
   );
 
   return result.rows[0];
 }
 
-async function updateJobPost(jobPostId, { postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, scheduledAt, allowDirectBooking }) {
+async function updateJobPost(jobPostId, { postType, title, category, municipality, locationDetails, description, budgetMin, budgetMax, workersNeeded, scheduledAt, allowDirectBooking }) {
   const pool = requirePostgres();
   const result = await pool.query(
     `
@@ -106,8 +122,9 @@ async function updateJobPost(jobPostId, { postType, title, category, municipalit
         description = $7,
         budget_min = $8,
         budget_max = $9,
-        scheduled_at = $10,
-        allow_direct_booking = $11,
+        workers_needed = $10,
+        scheduled_at = $11,
+        allow_direct_booking = $12,
         updated_at = NOW()
       WHERE id = $1
       RETURNING
@@ -121,15 +138,19 @@ async function updateJobPost(jobPostId, { postType, title, category, municipalit
         description,
         budget_min AS "budgetMin",
         budget_max AS "budgetMax",
+        workers_needed AS "workersNeeded",
         allow_direct_booking AS "allowDirectBooking",
         status,
         (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id) AS "offerCount",
+        (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id AND offers.status = 'pending') AS "pendingOfferCount",
+        (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id AND offers.status = 'accepted') AS "acceptedOfferCount",
+        '[]'::json AS "acceptedWorkers",
         assigned_provider_user_id AS "assignedProviderUserId",
         scheduled_at AS "scheduledAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `,
-    [jobPostId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, scheduledAt || null, allowDirectBooking ?? false],
+    [jobPostId, postType, title, category, municipality, locationDetails || '', description, budgetMin ?? null, budgetMax ?? null, workersNeeded || 1, scheduledAt || null, allowDirectBooking ?? false],
   );
 
   return result.rows[0] || null;
@@ -143,7 +164,7 @@ async function deleteJobPost(jobPostId) {
 
 async function listJobPosts({ userId, role, status }) {
   const pool = requirePostgresRead();
-  const values = [];
+  const values = [userId, role];
   const conditions = [];
 
   if (status) {
@@ -168,7 +189,7 @@ async function listJobPosts({ userId, role, status }) {
   return result.rows;
 }
 
-async function findJobPostById(jobPostId) {
+async function findJobPostById(jobPostId, { userId = '', role = 'user' } = {}) {
   const pool = requirePostgresRead();
   const result = await pool.query(
     `
@@ -176,9 +197,9 @@ async function findJobPostById(jobPostId) {
       FROM job_posts jp
       JOIN users client ON client.id = jp.client_user_id
       LEFT JOIN users provider ON provider.id = jp.assigned_provider_user_id
-      WHERE jp.id = $1
+      WHERE jp.id = $3
     `,
-    [jobPostId],
+    [userId, role, jobPostId],
   );
 
   return result.rows[0] || null;
@@ -191,7 +212,12 @@ async function createJobOffer({ jobPostId, providerUserId, message, proposedPric
       INSERT INTO job_offers (job_post_id, provider_user_id, message, proposed_price, media)
       VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (job_post_id, provider_user_id)
-      DO UPDATE SET message = EXCLUDED.message, proposed_price = EXCLUDED.proposed_price, media = EXCLUDED.media, status = 'pending', updated_at = NOW()
+      DO UPDATE SET
+        message = EXCLUDED.message,
+        proposed_price = EXCLUDED.proposed_price,
+        media = EXCLUDED.media,
+        status = CASE WHEN job_offers.status = 'accepted' THEN 'accepted' ELSE 'pending' END,
+        updated_at = NOW()
       RETURNING
         id,
         job_post_id AS "jobPostId",
@@ -293,19 +319,25 @@ async function acceptJobOffer({ jobPostId, offerId }) {
       return null;
     }
 
-    await client.query(
-      `
-        UPDATE job_offers
-        SET status = 'rejected', updated_at = NOW()
-        WHERE job_post_id = $1 AND id <> $2 AND status = 'pending'
-      `,
-      [jobPostId, offerId],
+    const countResult = await client.query(
+      `SELECT
+         jp.workers_needed AS "workersNeeded",
+         (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id AND offers.status = 'accepted') AS "acceptedOfferCount"
+       FROM job_posts jp
+       WHERE jp.id = $1 AND jp.status = 'open'`,
+      [jobPostId],
     );
+    const counts = countResult.rows[0] || null;
+    if (!counts) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const filled = counts.acceptedOfferCount >= counts.workersNeeded;
 
     const jobResult = await client.query(
       `
         UPDATE job_posts
-        SET status = 'assigned', assigned_provider_user_id = $2, updated_at = NOW()
+        SET status = $3, assigned_provider_user_id = COALESCE(assigned_provider_user_id, $2), updated_at = NOW()
         WHERE id = $1 AND status = 'open'
         RETURNING
           id,
@@ -318,14 +350,18 @@ async function acceptJobOffer({ jobPostId, offerId }) {
           description,
           budget_min AS "budgetMin",
           budget_max AS "budgetMax",
+          workers_needed AS "workersNeeded",
           status,
           (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id) AS "offerCount",
+          (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id AND offers.status = 'pending') AS "pendingOfferCount",
+          (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = job_posts.id AND offers.status = 'accepted') AS "acceptedOfferCount",
+          '[]'::json AS "acceptedWorkers",
           assigned_provider_user_id AS "assignedProviderUserId",
           scheduled_at AS "scheduledAt",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `,
-      [jobPostId, offer.providerUserId],
+      [jobPostId, offer.providerUserId, filled ? 'assigned' : 'open'],
     );
 
     const jobPost = jobResult.rows[0] || null;
@@ -347,7 +383,7 @@ async function acceptJobOffer({ jobPostId, offerId }) {
 async function declineJobOffer({ jobPostId, offerId }) {
   const pool = requirePostgres();
   const result = await pool.query(
-    `UPDATE job_offers SET status = 'declined', updated_at = NOW()
+    `UPDATE job_offers SET status = 'rejected', updated_at = NOW()
      WHERE id = $1 AND job_post_id = $2 AND status = 'pending'
      RETURNING id, job_post_id AS "jobPostId", provider_user_id AS "providerUserId",
                status, created_at AS "createdAt"`,

@@ -11,7 +11,7 @@ const GEMINI_URL =
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
-const USER_SYSTEM_PROMPT = `You are HanapGawa AI, a friendly assistant for the HanapGawa app — a local service marketplace in Tawi-Tawi, Philippines that connects clients with skilled workers and agencies.
+const USER_SYSTEM_PROMPT = `You are Zandra AI, a friendly assistant for the HanapGawa app — a local service marketplace in Tawi-Tawi, Philippines that connects clients with skilled workers and agencies.
 
 Help users with:
 - Finding workers or services (plumbing, electrical, cleaning, tutoring, beauty, delivery, etc.)

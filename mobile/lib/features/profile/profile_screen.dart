@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/api/marketplace_api.dart';
@@ -36,6 +39,24 @@ class ProfileScreen extends StatefulWidget {
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _CircleClipper extends CustomClipper<Path> {
+  const _CircleClipper();
+
+  @override
+  Path getClip(Size size) {
+    final shortest = size.shortestSide;
+    final rect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: shortest,
+      height: shortest,
+    );
+    return Path()..addOval(rect);
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
@@ -181,7 +202,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
     if (confirmed != true || !mounted) return;
     if (!SyncService.instance.isOnline) {
-      await LocalDb.instance.queueAction('delete_job_post', {'jobPostId': post.id});
+      await LocalDb.instance
+          .queueAction('delete_job_post', {'jobPostId': post.id});
       if (!mounted) return;
       setState(() => _myJobPosts.removeWhere((j) => j.id == post.id));
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -203,7 +225,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('delete_job_post', {'jobPostId': post.id});
+        await LocalDb.instance
+            .queueAction('delete_job_post', {'jobPostId': post.id});
         if (!mounted) return;
         setState(() => _myJobPosts.removeWhere((j) => j.id == post.id));
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -256,8 +279,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _followLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -372,6 +395,71 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<Uint8List?> _arrangePickedImage(
+    Uint8List bytes, {
+    required String title,
+    required double aspectRatio,
+    bool circle = false,
+  }) async {
+    final boundaryKey = GlobalKey();
+    return showDialog<Uint8List>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(
+            circle
+                ? 'Pinch to zoom and drag to arrange your profile photo.'
+                : 'Pinch to zoom and drag to arrange your cover photo.',
+            style: const TextStyle(color: appMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          RepaintBoundary(
+            key: boundaryKey,
+            child: ClipPath(
+              clipper: circle ? const _CircleClipper() : null,
+              child: AspectRatio(
+                aspectRatio: aspectRatio,
+                child: ColoredBox(
+                  color: Colors.black12,
+                  child: InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: Image.memory(
+                      bytes,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final boundary = boundaryKey.currentContext?.findRenderObject()
+                  as RenderRepaintBoundary?;
+              if (boundary == null) return;
+              final image = await boundary.toImage(pixelRatio: 3);
+              final data =
+                  await image.toByteData(format: ui.ImageByteFormat.png);
+              if (ctx.mounted && data != null) {
+                Navigator.pop(ctx, data.buffer.asUint8List());
+              }
+            },
+            child: const Text('Use photo'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showProfilePicOptions() {
     final profilePic = _profileData?.profilePic;
     showModalBottomSheet<void>(
@@ -382,7 +470,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const SizedBox(height: 8),
           Container(
-              width: 36, height: 4,
+              width: 36,
+              height: 4,
               decoration: BoxDecoration(
                   color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2))),
@@ -433,7 +522,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const SizedBox(height: 8),
           Container(
-              width: 36, height: 4,
+              width: 36,
+              height: 4,
               decoration: BoxDecoration(
                   color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2))),
@@ -568,8 +658,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       await widget.api.deleteCoverPic();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cover photo removed.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Cover photo removed.')));
       await _load();
     } catch (e) {
       if (!mounted) return;
@@ -602,12 +692,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       imageQuality: 70,
     );
     if (file == null || !mounted) return;
-    final bytes = await file.readAsBytes();
+    final pickedBytes = await file.readAsBytes();
+    final bytes = await _arrangePickedImage(
+      pickedBytes,
+      title: 'Arrange profile photo',
+      aspectRatio: 1,
+      circle: true,
+    );
+    if (bytes == null || !mounted) return;
     final image = base64Encode(bytes);
     if (!mounted) return;
 
     if (!SyncService.instance.isOnline) {
-      await LocalDb.instance.queueAction('update_profile_pic', {'image': image});
+      await LocalDb.instance
+          .queueAction('update_profile_pic', {'image': image});
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Row(children: [
@@ -623,7 +721,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _uploadingPic = true);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Row(children: [
-        SizedBox(width: 18, height: 18,
+        SizedBox(
+            width: 18,
+            height: 18,
             child: CircularProgressIndicator(strokeWidth: 2)),
         SizedBox(width: 12),
         Text('Uploading profile photo...'),
@@ -643,7 +743,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('update_profile_pic', {'image': image});
+        await LocalDb.instance
+            .queueAction('update_profile_pic', {'image': image});
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Row(children: [
@@ -672,7 +773,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       imageQuality: 75,
     );
     if (file == null || !mounted) return;
-    final bytes = await file.readAsBytes();
+    final pickedBytes = await file.readAsBytes();
+    final bytes = await _arrangePickedImage(
+      pickedBytes,
+      title: 'Arrange cover photo',
+      aspectRatio: 16 / 7,
+    );
+    if (bytes == null || !mounted) return;
     final image = base64Encode(bytes);
     if (!mounted) return;
 
@@ -693,7 +800,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _uploadingCover = true);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Row(children: [
-        SizedBox(width: 18, height: 18,
+        SizedBox(
+            width: 18,
+            height: 18,
             child: CircularProgressIndicator(strokeWidth: 2)),
         SizedBox(width: 12),
         Text('Uploading cover photo...'),
@@ -713,7 +822,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       if (SyncService.isNetworkError(e)) {
-        await LocalDb.instance.queueAction('update_cover_pic', {'image': image});
+        await LocalDb.instance
+            .queueAction('update_cover_pic', {'image': image});
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Row(children: [
@@ -793,114 +903,118 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheetState) {
           return Padding(
-        padding: EdgeInsets.fromLTRB(
-            18, 18, 18, 18 + MediaQuery.viewInsetsOf(ctx).bottom),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Edit Profile',
-                  style: Theme.of(ctx)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 14),
-              TextField(
-                  controller: bio,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Bio')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: address,
-                  decoration: const InputDecoration(labelText: 'Address')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: school,
-                  decoration: const InputDecoration(labelText: 'School')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: birthday,
-                  decoration: const InputDecoration(labelText: 'Birthday')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: work,
-                  decoration: const InputDecoration(labelText: 'Work')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: currentCity,
-                  decoration: const InputDecoration(labelText: 'Current city')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: hometown,
-                  decoration: const InputDecoration(labelText: 'Hometown')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: relationship,
-                  decoration:
-                      const InputDecoration(labelText: 'Relationship status')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: featured,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                      labelText: 'Featured highlights',
-                      hintText: 'One photo/post highlight per line')),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: saving
-                    ? null
-                    : () async {
-                        setSheetState(() => saving = true);
-                        try {
-                          await widget.api.updateUserProfileData(UserProfileData(
-                            bio: bio.text.trim(),
-                            address: address.text.trim(),
-                            school: school.text.trim(),
-                            birthday: birthday.text.trim(),
-                            work: work.text.trim(),
-                            currentCity: currentCity.text.trim(),
-                            hometown: hometown.text.trim(),
-                            relationshipStatus: relationship.text.trim(),
-                            featured: featured.text
-                                .split('\n')
-                                .map((line) => line.trim())
-                                .where((line) => line.isNotEmpty)
-                                .toList(),
-                          ));
-                          if (!ctx.mounted) return;
-                          Navigator.pop(ctx);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Profile updated!'),
-                                duration: Duration(seconds: 3),
-                              ),
-                            );
-                            await _load();
-                          }
-                        } catch (e) {
-                          if (ctx.mounted) setSheetState(() => saving = false);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(friendlyError(e)),
-                                backgroundColor: Colors.red.shade700,
-                                duration: const Duration(seconds: 5)));
-                          }
-                        }
-                      },
-                child: saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Text('Save'),
+            padding: EdgeInsets.fromLTRB(
+                18, 18, 18, 18 + MediaQuery.viewInsetsOf(ctx).bottom),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Edit Profile',
+                      style: Theme.of(ctx)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 14),
+                  TextField(
+                      controller: bio,
+                      maxLines: 3,
+                      decoration: const InputDecoration(labelText: 'Bio')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: address,
+                      decoration: const InputDecoration(labelText: 'Address')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: school,
+                      decoration: const InputDecoration(labelText: 'School')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: birthday,
+                      decoration: const InputDecoration(labelText: 'Birthday')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: work,
+                      decoration: const InputDecoration(labelText: 'Work')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: currentCity,
+                      decoration:
+                          const InputDecoration(labelText: 'Current city')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: hometown,
+                      decoration: const InputDecoration(labelText: 'Hometown')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: relationship,
+                      decoration: const InputDecoration(
+                          labelText: 'Relationship status')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: featured,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                          labelText: 'Featured highlights',
+                          hintText: 'One photo/post highlight per line')),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            setSheetState(() => saving = true);
+                            try {
+                              await widget.api
+                                  .updateUserProfileData(UserProfileData(
+                                bio: bio.text.trim(),
+                                address: address.text.trim(),
+                                school: school.text.trim(),
+                                birthday: birthday.text.trim(),
+                                work: work.text.trim(),
+                                currentCity: currentCity.text.trim(),
+                                hometown: hometown.text.trim(),
+                                relationshipStatus: relationship.text.trim(),
+                                featured: featured.text
+                                    .split('\n')
+                                    .map((line) => line.trim())
+                                    .where((line) => line.isNotEmpty)
+                                    .toList(),
+                              ));
+                              if (!ctx.mounted) return;
+                              Navigator.pop(ctx);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Profile updated!'),
+                                    duration: Duration(seconds: 3),
+                                  ),
+                                );
+                                await _load();
+                              }
+                            } catch (e) {
+                              if (ctx.mounted)
+                                setSheetState(() => saving = false);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content: Text(friendlyError(e)),
+                                        backgroundColor: Colors.red.shade700,
+                                        duration: const Duration(seconds: 5)));
+                              }
+                            }
+                          },
+                    child: saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Text('Save'),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-      );
+            ),
+          );
         },
       ),
     );
@@ -929,8 +1043,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   CircularProgressIndicator(),
                   SizedBox(height: 16),
                   Text('Logging out…',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 15)),
+                      style:
+                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                 ],
               ),
             ),
@@ -1443,8 +1557,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     label: 'Average', value: average.toStringAsFixed(1))),
             const SizedBox(width: 8),
             Expanded(
-                child:
-                    StatCard(label: 'Reviews', value: _reviews.length.toString())),
+                child: StatCard(
+                    label: 'Reviews', value: _reviews.length.toString())),
           ]),
           const SizedBox(height: 12),
           ..._reviews.take(3).map((review) => Padding(
@@ -1473,8 +1587,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       if ((review.comment ?? '').isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(review.comment!,
-                            style: const TextStyle(
-                                color: appMuted, fontSize: 13)),
+                            style:
+                                const TextStyle(color: appMuted, fontSize: 13)),
                       ],
                     ]),
               )),
@@ -1545,7 +1659,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: _JobPostCard(
                 post: jobPosts[i],
                 canDelete: _isOwnProfile,
-                onDelete: _isOwnProfile ? () => _deleteJobPost(jobPosts[i]) : null,
+                onDelete:
+                    _isOwnProfile ? () => _deleteJobPost(jobPosts[i]) : null,
                 onTap: () => _openJobPostDetail(context, jobPosts[i]),
               ),
             ),
@@ -1833,70 +1948,71 @@ class _JobPostCard extends StatelessWidget {
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.green.shade100),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.green.withAlpha(15),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.green.shade100),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.green.withAlpha(15),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Text(
+                  post.postType == 'offering_service'
+                      ? 'Offering Service'
+                      : 'Hiring',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green.shade700,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              const Spacer(),
+              if (canDelete && onDelete != null)
+                GestureDetector(
+                  onTap: onDelete,
+                  child: const Icon(Icons.delete_outline,
+                      size: 18, color: Colors.red),
+                ),
+            ]),
+            const SizedBox(height: 8),
+            Text(post.title,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+            const SizedBox(height: 4),
+            Text(post.description,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: appMuted, fontSize: 13)),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              InfoPill(icon: Icons.work_outline, label: post.category),
+              InfoPill(icon: Icons.place_outlined, label: post.municipality),
+              if (post.budgetMin != null)
+                InfoPill(
+                    icon: Icons.payments_outlined,
+                    label: 'P${post.budgetMin} – P${post.budgetMax ?? 0}'),
+            ]),
+            const SizedBox(height: 8),
+            Text(timeAgo(post.createdAt),
+                style: const TextStyle(color: appMuted, fontSize: 12)),
+          ]),
         ),
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.green.shade200),
-              ),
-              child: Text(
-                post.postType == 'offering_service'
-                    ? 'Offering Service'
-                    : 'Hiring',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.green.shade700,
-                    fontWeight: FontWeight.w700),
-              ),
-            ),
-            const Spacer(),
-            if (canDelete && onDelete != null)
-              GestureDetector(
-                onTap: onDelete,
-                child: const Icon(Icons.delete_outline,
-                    size: 18, color: Colors.red),
-              ),
-          ]),
-          const SizedBox(height: 8),
-          Text(post.title,
-              style:
-                  const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
-          const SizedBox(height: 4),
-          Text(post.description,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: appMuted, fontSize: 13)),
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, runSpacing: 6, children: [
-            InfoPill(icon: Icons.work_outline, label: post.category),
-            InfoPill(icon: Icons.place_outlined, label: post.municipality),
-            if (post.budgetMin != null)
-              InfoPill(
-                  icon: Icons.payments_outlined,
-                  label: 'P${post.budgetMin} – P${post.budgetMax ?? 0}'),
-          ]),
-          const SizedBox(height: 8),
-          Text(timeAgo(post.createdAt),
-              style: const TextStyle(color: appMuted, fontSize: 12)),
-        ]),
-      ),
-    );
+      );
 }
 
 class _PostCard extends StatelessWidget {

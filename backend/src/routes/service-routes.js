@@ -23,17 +23,21 @@ const serviceListingSchema = z.object({
   allowDirectBooking: z.boolean().default(false),
 });
 
+async function handleSearchServiceListings(req, res) {
+  const listings = await searchServiceListings({
+    category: req.query.category,
+    municipality: req.query.municipality,
+    keyword: req.query.keyword || req.query.service,
+  });
+
+  res.json({ listings });
+}
+
+router.get('/', asyncHandler(handleSearchServiceListings));
+
 router.get(
   '/search',
-  asyncHandler(async (req, res) => {
-    const listings = await searchServiceListings({
-      category: req.query.category,
-      municipality: req.query.municipality,
-      keyword: req.query.keyword || req.query.service,
-    });
-
-    res.json({ listings });
-  }),
+  asyncHandler(handleSearchServiceListings),
 );
 
 router.get(

@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:video_compress/video_compress.dart';
 import 'package:video_player/video_player.dart';
 
@@ -72,7 +76,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadFeed();
+    unawaited(_loadCachedFeedThenRefresh());
     _loadStories();
     _feedTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _loadFeed(showSpinner: false);
@@ -155,7 +159,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   Future<void> _loadFeed({bool showSpinner = true}) async {
-    if (showSpinner) setState(() => _loading = true);
+    if (showSpinner && _items.isEmpty) setState(() => _loading = true);
 
     if (!SyncService.instance.isOnline) {
       // Offline: load from local cache
@@ -197,11 +201,18 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  Future<bool> _loadFeedFromCache({bool suppressSpinner = false}) async {
+  Future<void> _loadCachedFeedThenRefresh() async {
+    final loadedCache = await _loadFeedFromCache(silentIfEmpty: true);
+    await _loadFeed(showSpinner: !loadedCache);
+  }
+
+  Future<bool> _loadFeedFromCache(
+      {bool suppressSpinner = false, bool silentIfEmpty = false}) async {
     try {
       final cached = await LocalDb.instance.getCachedFeed();
       if (!mounted) return false;
       if (cached.isEmpty) {
+        if (silentIfEmpty) return false;
         setState(() {
           _message = 'No cached posts. Connect to load the feed.';
           _loading = false;
@@ -1128,12 +1139,15 @@ class _StoryViewer extends StatefulWidget {
 }
 
 class _StoryViewerState extends State<_StoryViewer> {
+  static final Map<String, Future<List<String>>> _musicSearchCache = {};
+
   late int _groupIndex;
   late int _index;
   var _viewers = <Map<String, dynamic>>[];
   var _loadingViewers = false;
   String? _floatingReaction;
   String? _ownerTransition;
+  var _ownerFlipDirection = 1;
   final _player = AudioPlayer();
   VideoPlayerController? _videoController;
   StreamSubscription<void>? _musicCompleteSub;
@@ -1157,22 +1171,25 @@ class _StoryViewerState extends State<_StoryViewer> {
     });
     _markViewed();
     if (_isOwner) _loadViewers();
+    _prefetchStoryMusic();
     _playStoryMusic();
     _initStoryVideo();
   }
 
   Future<void> _configureStoryAudio() async {
-    await _player.setAudioContext(AudioContext(
-      android: const AudioContextAndroid(
-        contentType: AndroidContentType.music,
-        usageType: AndroidUsageType.media,
-        audioFocus: AndroidAudioFocus.gain,
-      ),
-      iOS: AudioContextIOS(
-        category: AVAudioSessionCategory.playback,
-        options: const {AVAudioSessionOptions.mixWithOthers},
-      ),
-    ));
+    try {
+      await _player.setAudioContext(AudioContext(
+        android: const AudioContextAndroid(
+          contentType: AndroidContentType.music,
+          usageType: AndroidUsageType.media,
+          audioFocus: AndroidAudioFocus.gain,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.playback,
+          options: const {AVAudioSessionOptions.mixWithOthers},
+        ),
+      ));
+    } catch (_) {}
   }
 
   Future<void> _playStoryMusic({bool refresh = false}) async {
@@ -1202,17 +1219,56 @@ class _StoryViewerState extends State<_StoryViewer> {
 
   Future<bool> _tryPlayStoryMusicUrls(List<String> urls, int requestId) async {
     await _configureStoryAudio();
-    await _player.setVolume(1.0);
-    await _player.setReleaseMode(ReleaseMode.loop);
+    if (!mounted || requestId != _musicRequestId) return false;
+    try {
+      await _player.setVolume(1.0);
+      await _player.setReleaseMode(ReleaseMode.loop);
+    } catch (_) {
+      return false;
+    }
     for (final url in urls) {
       if (requestId != _musicRequestId) return false;
       try {
         await _player.stop();
-        await _player.play(UrlSource(url));
+        await _player.play(await _storyMusicSource(url));
         return true;
       } catch (_) {}
     }
     return false;
+  }
+
+  Future<Source> _storyMusicSource(String url) async {
+    final file = await _cachedStoryMusicFile(url, download: false);
+    if (file != null) return DeviceFileSource(file.path);
+    unawaited(_cachedStoryMusicFile(url, download: true));
+    return UrlSource(url);
+  }
+
+  Future<File?> _cachedStoryMusicFile(String url,
+      {required bool download}) async {
+    try {
+      final dir =
+          Directory('${(await getTemporaryDirectory()).path}/story_music');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final file = File('${dir.path}/${_stableStoryMusicKey(url)}.mp3');
+      if (await file.exists() && await file.length() > 0) return file;
+      if (!download) return null;
+
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _stableStoryMusicKey(String url) {
+    var hash = 5381;
+    for (final unit in url.codeUnits) {
+      hash = ((hash << 5) + hash + unit) & 0x3fffffff;
+    }
+    return '${url.length}_$hash';
   }
 
   List<String> get _storySavedMusicUrls {
@@ -1231,14 +1287,42 @@ class _StoryViewerState extends State<_StoryViewer> {
     final music = _story.metadata['music']?.toString();
     if (music == null || music.isEmpty) return const [];
     try {
-      final tracks = await widget.api.searchMusic(music);
+      final tracks = await _storyMusicUrlsForQuery(music);
       if (requestId != _musicRequestId) return const [];
+      return tracks;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<String>> _storyMusicUrlsForQuery(String music) {
+    final cached = _musicSearchCache[music];
+    if (cached != null) return cached;
+    final future = widget.api.searchMusic(music).then((tracks) {
       return tracks
           .map((track) => track['previewUrl']?.toString().trim() ?? '')
           .where((preview) => preview.isNotEmpty)
           .toList();
-    } catch (_) {
-      return const [];
+    }).catchError((Object error) {
+      _musicSearchCache.remove(music);
+      throw error;
+    });
+    _musicSearchCache[music] = future;
+    return future;
+  }
+
+  void _prefetchStoryMusic() {
+    final urls = _storySavedMusicUrls.where((url) => url.startsWith('http'));
+    for (final url in urls) {
+      unawaited(_cachedStoryMusicFile(url, download: true));
+    }
+    final music = _story.metadata['music']?.toString();
+    if (music != null && music.isNotEmpty) {
+      unawaited(_storyMusicUrlsForQuery(music).then((urls) {
+        for (final url in urls.take(2)) {
+          unawaited(_cachedStoryMusicFile(url, download: true));
+        }
+      }));
     }
   }
 
@@ -1289,6 +1373,7 @@ class _StoryViewerState extends State<_StoryViewer> {
 
   @override
   void dispose() {
+    _musicRequestId++;
     _videoController?.dispose();
     _musicCompleteSub?.cancel();
     _player.dispose();
@@ -1327,17 +1412,104 @@ class _StoryViewerState extends State<_StoryViewer> {
       _floatingReaction = null;
       _loadingViewers = false;
     });
-    if (changedOwner) _showOwnerTransition();
+    if (changedOwner) _showOwnerTransition(delta);
     _markViewed();
     if (_isOwner) _loadViewers();
+    _prefetchStoryMusic();
     _playStoryMusic();
     _initStoryVideo();
   }
 
-  void _showOwnerTransition() {
+  Widget _buildOwnerFlipSurface(Widget child) {
+    if (_ownerTransition == null) return child;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('surface-$_ownerTransition'),
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 520),
+      curve: Curves.easeOutCubic,
+      builder: (_, value, child) {
+        final angle = (1 - value) * _ownerFlipDirection * math.pi / 1.8;
+        return Opacity(
+          opacity: value.clamp(0.0, 1.0),
+          child: Transform(
+            alignment: _ownerFlipDirection >= 0
+                ? Alignment.centerLeft
+                : Alignment.centerRight,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.0022)
+              ..rotateY(angle),
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+
+  Offset _storyLayoutOffset(String key, Offset fallback) {
+    final layout = _story.metadata['layout'];
+    if (layout is! Map) return fallback;
+    final item = layout[key];
+    if (item is! Map) return fallback;
+    final x = (item['x'] as num?)?.toDouble() ?? fallback.dx;
+    final y = (item['y'] as num?)?.toDouble() ?? fallback.dy;
+    return Offset(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+  }
+
+  Widget _buildArrangedStoryLayers() {
+    final hasLayout = _story.metadata['layout'] is Map;
+    if (!hasLayout) return const SizedBox.shrink();
+    return LayoutBuilder(builder: (context, constraints) {
+      Widget placed({
+        required Offset offset,
+        required Size size,
+        required Widget child,
+      }) {
+        return Positioned(
+          left: offset.dx * constraints.maxWidth - size.width / 2,
+          top: offset.dy * constraints.maxHeight - size.height / 2,
+          width: size.width,
+          height: size.height,
+          child: child,
+        );
+      }
+
+      return _buildOwnerFlipSurface(Stack(children: [
+        if (_story.image != null)
+          placed(
+            offset: _storyLayoutOffset('photo', const Offset(0.5, 0.46)),
+            size: const Size(220, 220),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: _storyImage(_story.image!, _story.fullName),
+            ),
+          ),
+        if (_story.video != null &&
+            _videoController?.value.isInitialized == true)
+          placed(
+            offset: _storyLayoutOffset('video', const Offset(0.5, 0.52)),
+            size: const Size(190, 250),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _videoController!.value.size.width,
+                  height: _videoController!.value.size.height,
+                  child: VideoPlayer(_videoController!),
+                ),
+              ),
+            ),
+          ),
+      ]));
+    });
+  }
+
+  void _showOwnerTransition(int direction) {
     final isMine = _story.userId == widget.api.storedUser?.id;
     final firstName = _story.fullName.split(' ').first;
     setState(() {
+      _ownerFlipDirection = direction >= 0 ? 1 : -1;
       _ownerTransition =
           isMine ? 'Back to your story' : 'Other user story: $firstName';
     });
@@ -1418,6 +1590,7 @@ class _StoryViewerState extends State<_StoryViewer> {
         ? Color(story.metadata['backgroundColor'] as int)
         : appPrimary;
     final total = _stories.length;
+    final hasLayout = story.metadata['layout'] is Map;
 
     return Dialog.fullscreen(
       backgroundColor: Colors.black,
@@ -1425,30 +1598,38 @@ class _StoryViewerState extends State<_StoryViewer> {
         child: Stack(children: [
           // Background
           Positioned.fill(
-            child: Container(
-              color: background,
-              child: story.image != null
-                  ? _storyImage(story.image!, '')
-                  : gif != null
-                      ? Image.network(gif,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const SizedBox.shrink())
-                      : story.video != null
-                          ? _videoController?.value.isInitialized == true
-                              ? FittedBox(
-                                  fit: BoxFit.cover,
-                                  child: SizedBox(
-                                    width: _videoController!.value.size.width,
-                                    height: _videoController!.value.size.height,
-                                    child: VideoPlayer(_videoController!),
-                                  ),
-                                )
-                              : const Center(
-                                  child: CircularProgressIndicator(
-                                      color: Colors.white))
-                          : null,
+            child: _buildOwnerFlipSurface(
+              Container(
+                color: background,
+                child: hasLayout
+                    ? null
+                    : story.image != null
+                        ? _storyImage(story.image!, '')
+                        : gif != null
+                            ? Image.network(gif,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink())
+                            : story.video != null
+                                ? _videoController?.value.isInitialized == true
+                                    ? FittedBox(
+                                        fit: BoxFit.cover,
+                                        child: SizedBox(
+                                          width: _videoController!
+                                              .value.size.width,
+                                          height: _videoController!
+                                              .value.size.height,
+                                          child: VideoPlayer(_videoController!),
+                                        ),
+                                      )
+                                    : const Center(
+                                        child: CircularProgressIndicator(
+                                            color: Colors.white))
+                                : null,
+              ),
             ),
           ),
+          if (hasLayout) Positioned.fill(child: _buildArrangedStoryLayers()),
           // Gradient overlay
           Positioned.fill(
             child: Container(
@@ -1558,49 +1739,11 @@ class _StoryViewerState extends State<_StoryViewer> {
               top: 78,
               left: 28,
               right: 28,
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0, end: 1),
-                duration: const Duration(milliseconds: 220),
-                builder: (_, value, child) => Opacity(
-                  opacity: value,
-                  child: Transform.translate(
-                    offset: Offset(0, -8 * (1 - value)),
-                    child: child,
-                  ),
-                ),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(235),
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(
-                      _isOwner ? Icons.person_outline : Icons.group_outlined,
-                      color: appPrimary,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _ownerTransition!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFF1F1F1F),
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  ]),
-                ),
+              child: _StoryOwnerFlipIndicator(
+                key: ValueKey(_ownerTransition),
+                label: _ownerTransition!,
+                isOwner: _isOwner,
+                direction: _ownerFlipDirection,
               ),
             ),
           // Close button
@@ -1616,19 +1759,36 @@ class _StoryViewerState extends State<_StoryViewer> {
             left: 24,
             right: 24,
             bottom: 92,
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              if (story.body.isNotEmpty)
-                Text(story.body,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900)),
-              if (location != null)
-                _StoryMetaPill(icon: Icons.place_outlined, label: location),
-              if (music != null)
-                _StoryMetaPill(icon: Icons.music_note_outlined, label: music),
-            ]),
+            child: _buildOwnerFlipSurface(
+              Align(
+                alignment: hasLayout
+                    ? Alignment(
+                        _storyLayoutOffset('text', const Offset(0.5, 0.78)).dx *
+                                2 -
+                            1,
+                        _storyLayoutOffset('text', const Offset(0.5, 0.78)).dy *
+                                2 -
+                            1,
+                      )
+                    : Alignment.bottomLeft,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (story.body.isNotEmpty)
+                        Text(story.body,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w900)),
+                      if (location != null)
+                        _StoryMetaPill(
+                            icon: Icons.place_outlined, label: location),
+                      if (music != null)
+                        _StoryMetaPill(
+                            icon: Icons.music_note_outlined, label: music),
+                    ]),
+              ),
+            ),
           ),
           // Floating reaction animation
           if (_floatingReaction != null)
@@ -1740,6 +1900,74 @@ class _StoryViewerState extends State<_StoryViewer> {
                   )),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+class _StoryOwnerFlipIndicator extends StatelessWidget {
+  const _StoryOwnerFlipIndicator({
+    super.key,
+    required this.label,
+    required this.isOwner,
+    required this.direction,
+  });
+
+  final String label;
+  final bool isOwner;
+  final int direction;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 520),
+      curve: Curves.easeOutCubic,
+      builder: (_, value, child) {
+        final angle = (1 - value) * direction * math.pi / 1.8;
+        return Opacity(
+          opacity: value.clamp(0.0, 1.0),
+          child: Transform(
+            alignment:
+                direction >= 0 ? Alignment.centerLeft : Alignment.centerRight,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.0022)
+              ..rotateY(angle),
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: Colors.white.withAlpha(240),
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black38,
+              blurRadius: 22,
+              offset: Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+            isOwner ? Icons.person_outline : Icons.group_outlined,
+            color: appPrimary,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF1F1F1F),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -1971,6 +2199,9 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
   Uint8List? _imageBytes;
   String? _videoPath;
   String? _gif;
+  var _photoOffset = const Offset(0.5, 0.46);
+  var _videoOffset = const Offset(0.5, 0.52);
+  var _textOffset = const Offset(0.5, 0.78);
   String? _location;
   String? _music;
   String? _musicUrl;
@@ -2006,7 +2237,6 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
     final bytes = await file.readAsBytes();
     setState(() {
       _imageBytes = bytes;
-      _videoPath = null;
       _gif = null;
     });
   }
@@ -2033,7 +2263,6 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       setState(() {
         _posting = false;
         _videoPath = path;
-        _imageBytes = null;
         _gif = null;
       });
     } catch (_) {
@@ -2041,7 +2270,6 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       setState(() {
         _posting = false;
         _videoPath = file.path;
-        _imageBytes = null;
         _gif = null;
         _error = null;
       });
@@ -2145,6 +2373,11 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
       if (_musicUrl != null) 'previewUrl': _musicUrl,
       if (_musicUrl != null) 'audioUrl': _musicUrl,
       'backgroundColor': _backgroundColor.value,
+      'layout': {
+        'photo': {'x': _photoOffset.dx, 'y': _photoOffset.dy},
+        'video': {'x': _videoOffset.dx, 'y': _videoOffset.dy},
+        'text': {'x': _textOffset.dx, 'y': _textOffset.dy},
+      },
     };
     if (!SyncService.instance.isOnline) {
       await LocalDb.instance.queueAction('create_story', {
@@ -2202,6 +2435,128 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
         });
       }
     }
+  }
+
+  Offset _clampStoryOffset(Offset offset) => Offset(
+        offset.dx.clamp(0.1, 0.9),
+        offset.dy.clamp(0.12, 0.9),
+      );
+
+  Widget _buildStoryArrangeCanvas(bool hasMedia) {
+    return LayoutBuilder(builder: (context, constraints) {
+      void movePhoto(DragUpdateDetails details) => setState(() {
+            _photoOffset = _clampStoryOffset(_photoOffset +
+                Offset(details.delta.dx / constraints.maxWidth,
+                    details.delta.dy / constraints.maxHeight));
+          });
+      void moveVideo(DragUpdateDetails details) => setState(() {
+            _videoOffset = _clampStoryOffset(_videoOffset +
+                Offset(details.delta.dx / constraints.maxWidth,
+                    details.delta.dy / constraints.maxHeight));
+          });
+
+      Widget placed({
+        required Offset offset,
+        required Size size,
+        required Widget child,
+        required GestureDragUpdateCallback onPanUpdate,
+      }) {
+        return Positioned(
+          left: offset.dx * constraints.maxWidth - size.width / 2,
+          top: offset.dy * constraints.maxHeight - size.height / 2,
+          width: size.width,
+          height: size.height,
+          child: GestureDetector(onPanUpdate: onPanUpdate, child: child),
+        );
+      }
+
+      return Stack(fit: StackFit.expand, children: [
+        _GradientBg(_backgroundColor),
+        if (_gif != null)
+          Image.network(_gif!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+        if (_imageBytes != null)
+          placed(
+            offset: _photoOffset,
+            size: const Size(180, 180),
+            onPanUpdate: movePhoto,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: Image.memory(_imageBytes!, fit: BoxFit.cover),
+            ),
+          ),
+        if (_videoPath != null)
+          placed(
+            offset: _videoOffset,
+            size: const Size(150, 200),
+            onPanUpdate: moveVideo,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: Colors.white70),
+              ),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.play_circle_fill, color: Colors.white, size: 52),
+                  SizedBox(height: 8),
+                  Text('Video',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+          ),
+        if (hasMedia)
+          const Positioned(
+            left: 12,
+            right: 12,
+            bottom: 8,
+            child: Text('Drag photo, video, or caption to arrange your story',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+          ),
+      ]);
+    });
+  }
+
+  Widget _buildDraggableStoryText(bool hasMedia) {
+    return LayoutBuilder(builder: (context, constraints) {
+      return Positioned(
+        left: _textOffset.dx * constraints.maxWidth - 135,
+        top: _textOffset.dy * constraints.maxHeight - 44,
+        width: 270,
+        child: GestureDetector(
+          onPanUpdate: (details) => setState(() {
+            _textOffset = _clampStoryOffset(_textOffset +
+                Offset(details.delta.dx / constraints.maxWidth,
+                    details.delta.dy / constraints.maxHeight));
+          }),
+          child: TextField(
+            controller: _bodyCtrl,
+            maxLines: hasMedia ? 2 : null,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 21,
+              fontWeight: FontWeight.w800,
+              height: 1.25,
+              shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              fillColor: Colors.black.withAlpha(35),
+              filled: true,
+              hintText:
+                  hasMedia ? 'Add a caption...' : "What's happening today?",
+              hintStyle: const TextStyle(color: Colors.white70, fontSize: 18),
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   @override
@@ -2268,46 +2623,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                   height: 270,
                   width: double.infinity,
                   child: Stack(fit: StackFit.expand, children: [
-                    // Background layer
-                    if (_imageBytes != null)
-                      Image.memory(_imageBytes!, fit: BoxFit.cover)
-                    else if (_videoPath != null)
-                      Container(
-                        color: Colors.black,
-                        child: const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.play_circle_fill,
-                                  color: Colors.white, size: 56),
-                              SizedBox(height: 8),
-                              Text('Video selected',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800)),
-                            ],
-                          ),
-                        ),
-                      )
-                    else if (_gif != null)
-                      Image.network(_gif!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              _GradientBg(_backgroundColor))
-                    else
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              _backgroundColor,
-                              Color.lerp(_backgroundColor, Colors.black, 0.25)!,
-                            ],
-                          ),
-                        ),
-                      ),
+                    _buildStoryArrangeCanvas(hasMedia),
                     // Gradient overlay for readability when media is shown
                     if (hasMedia)
                       Container(
@@ -2372,59 +2688,7 @@ class _StoryComposeSheetState extends State<_StoryComposeSheet> {
                           ),
                         ),
                       ),
-                    // Text input
-                    if (!hasMedia)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 48, 20, 20),
-                          child: TextField(
-                            controller: _bodyCtrl,
-                            maxLines: null,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 21,
-                              fontWeight: FontWeight.w700,
-                              height: 1.4,
-                              shadows: [
-                                Shadow(color: Colors.black26, blurRadius: 8)
-                              ],
-                            ),
-                            decoration: const InputDecoration(
-                              border: InputBorder.none,
-                              fillColor: Colors.transparent,
-                              filled: true,
-                              hintText: "What's happening today?",
-                              hintStyle: TextStyle(
-                                  color: Colors.white60, fontSize: 18),
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      Positioned(
-                        bottom: 12,
-                        left: 14,
-                        right: 14,
-                        child: TextField(
-                          controller: _bodyCtrl,
-                          maxLines: 2,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            shadows: [
-                              Shadow(color: Colors.black54, blurRadius: 8)
-                            ],
-                          ),
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            fillColor: Colors.transparent,
-                            filled: true,
-                            hintText: 'Add a caption...',
-                            hintStyle: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                      ),
+                    _buildDraggableStoryText(hasMedia),
                   ]),
                 ),
               ),

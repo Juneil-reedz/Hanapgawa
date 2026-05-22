@@ -336,6 +336,8 @@ async function ensurePostgresSchema() {
   `);
 
   await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS allow_direct_booking BOOLEAN NOT NULL DEFAULT FALSE`);
+  await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS workers_needed INTEGER NOT NULL DEFAULT 1`);
+  await client.query(`UPDATE job_posts SET workers_needed = 1 WHERE workers_needed IS NULL OR workers_needed < 1`);
   await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS post_type TEXT NOT NULL DEFAULT 'looking_for_worker'`);
   await client.query('ALTER TABLE job_posts DROP CONSTRAINT IF EXISTS job_posts_post_type_check');
   await client.query(`UPDATE job_posts SET post_type = 'looking_for_worker' WHERE post_type = 'seeking_worker'`);

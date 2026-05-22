@@ -55,9 +55,10 @@ class _UserAIScreenState extends State<UserAIScreen> {
     } catch (_) {
       if (mounted) {
         setState(() => _history.add((
-          isUser: false,
-          text: 'Sorry, I\'m having trouble connecting right now. Please try again.'
-        )));
+              isUser: false,
+              text:
+                  'Sorry, I\'m having trouble connecting right now. Please try again.'
+            )));
       }
     } finally {
       if (mounted) setState(() => _thinking = false);
@@ -79,7 +80,7 @@ class _UserAIScreenState extends State<UserAIScreen> {
             ),
             const SizedBox(width: 10),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('HanapGawa AI',
+              const Text('Zandra AI',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
               Text('Your local service assistant',
                   style: TextStyle(
@@ -103,8 +104,7 @@ class _UserAIScreenState extends State<UserAIScreen> {
                         return const _TypingIndicator();
                       }
                       final msg = _history[i];
-                      return _ChatBubble(
-                          text: msg.text, isUser: msg.isUser);
+                      return _ChatBubble(text: msg.text, isUser: msg.isUser);
                     },
                   ),
           ),
@@ -126,7 +126,7 @@ class _UserAIScreenState extends State<UserAIScreen> {
             child: const Icon(Icons.psychology, color: appPrimary, size: 36),
           ),
           const SizedBox(height: 16),
-          const Text('HanapGawa AI',
+          const Text('Zandra AI',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
           const SizedBox(height: 6),
           const Text(
@@ -138,8 +138,7 @@ class _UserAIScreenState extends State<UserAIScreen> {
           const Align(
             alignment: Alignment.centerLeft,
             child: Text('Suggested questions',
-                style:
-                    TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
           ),
           const SizedBox(height: 12),
           _SuggestGrid(onTap: (t) {
@@ -265,8 +264,8 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
         child: Container(
           width: 8,
           height: 8,
-          decoration: const BoxDecoration(
-              color: appPrimary, shape: BoxShape.circle),
+          decoration:
+              const BoxDecoration(color: appPrimary, shape: BoxShape.circle),
         ),
       );
 }
@@ -325,10 +324,9 @@ class _ChatBubble extends StatelessWidget {
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
           margin: const EdgeInsets.only(bottom: 12),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          constraints: BoxConstraints(
-              maxWidth: MediaQuery.sizeOf(context).width * 0.82),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          constraints:
+              BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.82),
           decoration: BoxDecoration(
             color: isUser ? appPrimary : const Color(0xFFF3EEFF),
             borderRadius: BorderRadius.only(

@@ -16,7 +16,11 @@ import 'chat_screen.dart';
 import 'conversation_tile.dart';
 
 class BookingsScreen extends StatefulWidget {
-  const BookingsScreen({super.key, required this.api, this.openJobs, this.pendingBookingCount = 0});
+  const BookingsScreen(
+      {super.key,
+      required this.api,
+      this.openJobs,
+      this.pendingBookingCount = 0});
   final MarketplaceApi api;
   final VoidCallback? openJobs;
   final int pendingBookingCount;
@@ -39,7 +43,6 @@ class _BookingsScreenState extends State<BookingsScreen> {
   final _searchCtrl = TextEditingController();
   var _searchQuery = '';
 
-
   // Unread tracking: convId → updatedAt when last seen
   final _lastSeen = <String, DateTime>{};
   var _initialLoadDone = false;
@@ -57,7 +60,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
       final q = _searchCtrl.text.trim();
       if (q != _searchQuery) {
         setState(() => _searchQuery = q);
-        _loadConversations(q);
+        if (_segment == 2) _loadConversations(q);
       }
     });
   }
@@ -105,6 +108,18 @@ class _BookingsScreenState extends State<BookingsScreen> {
   List<Booking> get _historyBookings =>
       _bookings.where((b) => _doneStatuses.contains(b.status)).toList();
 
+  List<Booking> get _filteredHistoryBookings {
+    final q = _searchQuery.toLowerCase();
+    if (q.isEmpty) return _historyBookings;
+    return _historyBookings.where((b) {
+      return b.serviceCategory.toLowerCase().contains(q) ||
+          b.notes.toLowerCase().contains(q) ||
+          b.locationDetails.toLowerCase().contains(q) ||
+          (b.workerName ?? '').toLowerCase().contains(q) ||
+          (b.clientName ?? '').toLowerCase().contains(q);
+    }).toList();
+  }
+
   /// Groups bookings by the other party and returns ordered pairs of
   /// (otherUserId, otherName, bookings).
   List<({String userId, String name, List<Booking> bookings})> _grouped(
@@ -113,8 +128,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final map = <String, List<Booking>>{};
     final names = <String, String>{};
     for (final b in bookings) {
-      final otherId =
-          b.clientUserId == myId ? b.workerUserId : b.clientUserId;
+      final otherId = b.clientUserId == myId ? b.workerUserId : b.clientUserId;
       final otherName = b.clientUserId == myId
           ? (b.workerName ?? 'Worker')
           : (b.clientName ?? 'Client');
@@ -143,8 +157,10 @@ class _BookingsScreenState extends State<BookingsScreen> {
       final bookings = results[0] as List<Booking>;
       final convs = results[1] as List<Conversation>;
       // Cache fresh results
-      unawaited(LocalDb.instance.cacheBookings(bookings.map((b) => b.toJson()).toList()));
-      unawaited(LocalDb.instance.cacheConversations(convs.map((c) => c.toJson()).toList()));
+      unawaited(LocalDb.instance
+          .cacheBookings(bookings.map((b) => b.toJson()).toList()));
+      unawaited(LocalDb.instance
+          .cacheConversations(convs.map((c) => c.toJson()).toList()));
       setState(() {
         _bookings = bookings;
         _conversations = convs;
@@ -183,7 +199,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
       } else {
         setState(() {
           _message = friendlyError(error);
-  
+
           _loading = false;
         });
       }
@@ -194,23 +210,30 @@ class _BookingsScreenState extends State<BookingsScreen> {
     try {
       final list = await widget.api.getMyConversations(search: search);
       if (search.isEmpty) {
-        unawaited(LocalDb.instance.cacheConversations(list.map((c) => c.toJson()).toList()));
+        unawaited(LocalDb.instance
+            .cacheConversations(list.map((c) => c.toJson()).toList()));
       }
       if (mounted) setState(() => _conversations = list);
     } catch (_) {
       if (search.isEmpty && mounted) {
         final cached = await LocalDb.instance.getCachedConversations();
         if (cached.isNotEmpty && mounted) {
-          setState(() => _conversations = cached.map(Conversation.fromJson).toList());
+          setState(() =>
+              _conversations = cached.map(Conversation.fromJson).toList());
         }
       }
     }
   }
 
-  static const _reasonStatuses = {'cancellation_requested', 'cancelled', 'rejected'};
+  static const _reasonStatuses = {
+    'cancellation_requested',
+    'cancelled',
+    'rejected'
+  };
 
   Future<String?> _promptReason(String status) async {
-    final title = status == 'rejected' ? 'Reason for declining' : 'Reason for cancelling';
+    final title =
+        status == 'rejected' ? 'Reason for declining' : 'Reason for cancelling';
     final ctrl = TextEditingController();
     final result = await showDialog<String>(
       context: context,
@@ -228,8 +251,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
               child: const Text('Confirm')),
@@ -265,8 +287,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
       }
       return;
     }
-    await widget.api.updateBookingStatus(booking.id, status,
-        cancellationReason: reason);
+    await widget.api
+        .updateBookingStatus(booking.id, status, cancellationReason: reason);
     await _load();
   }
 
@@ -296,9 +318,12 @@ class _BookingsScreenState extends State<BookingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Remove booking?'),
-        content: const Text('This will permanently remove this booking record.'),
+        content:
+            const Text('This will permanently remove this booking record.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Remove', style: TextStyle(color: Colors.red))),
@@ -311,9 +336,35 @@ class _BookingsScreenState extends State<BookingsScreen> {
       _load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
+    }
+  }
+
+  Future<void> _repostBooking(Booking booking) async {
+    final payload = JobPostPayload(
+      postType: 'looking_for_worker',
+      title: booking.serviceCategory,
+      category: booking.serviceCategory,
+      municipality: booking.municipality,
+      locationDetails: booking.locationDetails,
+      description: booking.notes.isEmpty
+          ? 'Reposted job from booking history.'
+          : booking.notes,
+      workersNeeded: 1,
+    );
+    try {
+      await widget.api.repostBooking(booking.id, payload);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Job reposted to Browse.'),
+      ));
+      widget.openJobs?.call();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     }
   }
 
@@ -384,8 +435,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
         );
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(friendlyError(e))));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
         return;
       }
@@ -445,8 +496,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
       _loadConversations(_searchQuery);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(friendlyError(e))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -456,10 +507,14 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete ${_selectedConvIds.length} conversation${_selectedConvIds.length == 1 ? '' : 's'}?'),
-        content: const Text('All messages in the selected conversations will be permanently deleted.'),
+        title: Text(
+            'Delete ${_selectedConvIds.length} conversation${_selectedConvIds.length == 1 ? '' : 's'}?'),
+        content: const Text(
+            'All messages in the selected conversations will be permanently deleted.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Delete', style: TextStyle(color: Colors.red))),
@@ -473,7 +528,9 @@ class _BookingsScreenState extends State<BookingsScreen> {
       } catch (_) {}
     }
     setState(() {
-      _conversations = _conversations.where((c) => !_selectedConvIds.contains(c.id)).toList();
+      _conversations = _conversations
+          .where((c) => !_selectedConvIds.contains(c.id))
+          .toList();
       _selectedConvIds.clear();
       _inboxSelectMode = false;
     });
@@ -485,12 +542,16 @@ class _BookingsScreenState extends State<BookingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete all conversations?'),
-        content: const Text('All messages will be permanently deleted. This cannot be undone.'),
+        content: const Text(
+            'All messages will be permanently deleted. This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete All', style: TextStyle(color: Colors.red))),
+              child: const Text('Delete All',
+                  style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -515,7 +576,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
                 if (_selectedConvIds.isNotEmpty)
                   TextButton.icon(
                     onPressed: _deleteSelectedConversations,
-                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                    icon: const Icon(Icons.delete_outline,
+                        size: 18, color: Colors.red),
                     label: Text('Delete (${_selectedConvIds.length})',
                         style: const TextStyle(color: Colors.red)),
                   ),
@@ -532,14 +594,17 @@ class _BookingsScreenState extends State<BookingsScreen> {
                   PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert),
                     onSelected: (v) {
-                      if (v == 'select') setState(() => _inboxSelectMode = true);
+                      if (v == 'select')
+                        setState(() => _inboxSelectMode = true);
                       if (v == 'delete_all') _deleteAllConversations();
                     },
                     itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'select', child: Text('Select messages')),
+                      PopupMenuItem(
+                          value: 'select', child: Text('Select messages')),
                       PopupMenuItem(
                           value: 'delete_all',
-                          child: Text('Delete all', style: TextStyle(color: Colors.red))),
+                          child: Text('Delete all',
+                              style: TextStyle(color: Colors.red))),
                     ],
                   ),
               ]
@@ -587,11 +652,13 @@ class _BookingsScreenState extends State<BookingsScreen> {
                   setState(() => _segment = value.first),
             ),
             const SizedBox(height: 12),
-            if (_segment == 2) ...[
+            if (_segment == 1 || _segment == 2) ...[
               TextField(
                 controller: _searchCtrl,
                 decoration: InputDecoration(
-                  hintText: 'Search conversations...',
+                  hintText: _segment == 1
+                      ? 'Search job history...'
+                      : 'Search conversations...',
                   prefixIcon: const Icon(Icons.search, size: 20),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
@@ -630,7 +697,8 @@ class _BookingsScreenState extends State<BookingsScreen> {
               else ...[
                 _PersonSelector(
                   groups: _grouped(_activeBookings),
-                  selectedIndex: _activeGroupIndex.clamp(0, _grouped(_activeBookings).length - 1),
+                  selectedIndex: _activeGroupIndex.clamp(
+                      0, _grouped(_activeBookings).length - 1),
                   onSelected: (i) => setState(() => _activeGroupIndex = i),
                 ),
                 const SizedBox(height: 8),
@@ -653,21 +721,23 @@ class _BookingsScreenState extends State<BookingsScreen> {
               ],
             ],
             if (!_loading && _message.isEmpty && _segment == 1) ...[
-              if (_historyBookings.isEmpty)
+              if (_filteredHistoryBookings.isEmpty)
                 const EmptyState(
                   icon: Icons.history_outlined,
-                  title: 'No history yet',
-                  subtitle: 'Completed and cancelled bookings will appear here.',
+                  title: 'No history found',
+                  subtitle:
+                      'Completed and cancelled bookings will appear here.',
                 )
               else ...[
                 _PersonSelector(
-                  groups: _grouped(_historyBookings),
-                  selectedIndex: _historyGroupIndex.clamp(0, _grouped(_historyBookings).length - 1),
+                  groups: _grouped(_filteredHistoryBookings),
+                  selectedIndex: _historyGroupIndex.clamp(
+                      0, _grouped(_filteredHistoryBookings).length - 1),
                   onSelected: (i) => setState(() => _historyGroupIndex = i),
                 ),
                 const SizedBox(height: 8),
                 Builder(builder: (ctx) {
-                  final groups = _grouped(_historyBookings);
+                  final groups = _grouped(_filteredHistoryBookings);
                   final idx = _historyGroupIndex.clamp(0, groups.length - 1);
                   final group = groups[idx];
                   return _GroupDetail(
@@ -680,6 +750,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                     onMessage: _messageOtherParty,
                     onTap: _openBookingDetail,
                     onDeleteBooking: _deleteBooking,
+                    onRepostBooking: _repostBooking,
                   );
                 }),
               ],
@@ -706,7 +777,9 @@ class _BookingsScreenState extends State<BookingsScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     subtitle: Text(
-                      conv.lastMessagePreview.isEmpty ? 'No messages' : conv.lastMessagePreview,
+                      conv.lastMessagePreview.isEmpty
+                          ? 'No messages'
+                          : conv.lastMessagePreview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13),
@@ -795,9 +868,8 @@ class _PersonSelector extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: 22,
-                    backgroundColor: selected
-                        ? appPrimary
-                        : appPrimary.withAlpha(40),
+                    backgroundColor:
+                        selected ? appPrimary : appPrimary.withAlpha(40),
                     child: Text(
                       _initials(group.name),
                       style: TextStyle(
@@ -814,7 +886,8 @@ class _PersonSelector extends StatelessWidget {
                       group.name.split(' ').first,
                       style: TextStyle(
                         fontSize: 11,
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
                         color: selected ? appPrimary : null,
                       ),
                       maxLines: 1,
@@ -853,6 +926,7 @@ class _GroupDetail extends StatelessWidget {
     this.onReschedule,
     required this.onTap,
     this.onDeleteBooking,
+    this.onRepostBooking,
   });
 
   final String userId;
@@ -865,6 +939,7 @@ class _GroupDetail extends StatelessWidget {
   final Future<void> Function(Booking)? onReschedule;
   final Future<void> Function(Booking) onTap;
   final Future<void> Function(Booking)? onDeleteBooking;
+  final Future<void> Function(Booking)? onRepostBooking;
 
   @override
   Widget build(BuildContext context) {
@@ -885,6 +960,7 @@ class _GroupDetail extends StatelessWidget {
             onReschedule: onReschedule,
             onTap: onTap,
             onDeleteBooking: onDeleteBooking,
+            onRepostBooking: onRepostBooking,
           ),
         if (asWorker.isNotEmpty) ...[
           if (asClient.isNotEmpty) const SizedBox(height: 4),
@@ -899,6 +975,7 @@ class _GroupDetail extends StatelessWidget {
             onReschedule: onReschedule,
             onTap: onTap,
             onDeleteBooking: onDeleteBooking,
+            onRepostBooking: onRepostBooking,
           ),
         ],
       ],
@@ -918,6 +995,7 @@ class _RoleSection extends StatelessWidget {
     this.onReschedule,
     required this.onTap,
     this.onDeleteBooking,
+    this.onRepostBooking,
   });
 
   final String label;
@@ -930,6 +1008,7 @@ class _RoleSection extends StatelessWidget {
   final Future<void> Function(Booking)? onReschedule;
   final Future<void> Function(Booking) onTap;
   final Future<void> Function(Booking)? onDeleteBooking;
+  final Future<void> Function(Booking)? onRepostBooking;
 
   @override
   Widget build(BuildContext context) {
@@ -964,7 +1043,10 @@ class _RoleSection extends StatelessWidget {
               ),
               child: Text(
                 '${bookings.length} booking${bookings.length == 1 ? '' : 's'}',
-                style: TextStyle(fontSize: 11, color: accentColor, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    fontSize: 11,
+                    color: accentColor,
+                    fontWeight: FontWeight.w600),
               ),
             ),
           ]),
@@ -986,10 +1068,19 @@ class _RoleSection extends StatelessWidget {
                       api: api,
                       onStatus: (status) => onStatus(booking, status),
                       onMessage: () => onMessage(booking),
-                      onReschedule: onReschedule != null ? () => onReschedule!(booking) : null,
+                      onReschedule: onReschedule != null
+                          ? () => onReschedule!(booking)
+                          : null,
                       onTap: () => onTap(booking),
+                      onRepost: onRepostBooking != null &&
+                              booking.clientUserId == myId &&
+                              ['completed', 'cancelled', 'rejected']
+                                  .contains(booking.status)
+                          ? () => onRepostBooking!(booking)
+                          : null,
                       onDelete: onDeleteBooking != null &&
-                              ['completed', 'cancelled', 'rejected'].contains(booking.status)
+                              ['completed', 'cancelled', 'rejected']
+                                  .contains(booking.status)
                           ? () => onDeleteBooking!(booking)
                           : null,
                     ),
@@ -1022,7 +1113,10 @@ class _BookingDetailSheet extends StatelessWidget {
   bool get _isClient => booking.clientUserId == myId;
   bool get _isWorker => booking.workerUserId == myId;
   bool get _isApprover =>
-      (booking.source == 'job_application' ? booking.clientUserId : booking.workerUserId) == myId;
+      (booking.source == 'job_application'
+          ? booking.clientUserId
+          : booking.workerUserId) ==
+      myId;
 
   String get _sourceLabel {
     switch (booking.source) {
@@ -1037,29 +1131,46 @@ class _BookingDetailSheet extends StatelessWidget {
 
   Color _statusColor(String s) {
     switch (s) {
-      case 'pending': return Colors.orange;
-      case 'accepted': return Colors.blue;
-      case 'in_progress': return appPrimary;
-      case 'completion_requested': return Colors.teal;
-      case 'completed': return const Color(0xFF2E7D32);
+      case 'pending':
+        return Colors.orange;
+      case 'accepted':
+        return Colors.blue;
+      case 'in_progress':
+        return appPrimary;
+      case 'completion_requested':
+        return Colors.teal;
+      case 'completed':
+        return const Color(0xFF2E7D32);
       case 'rejected':
-      case 'cancelled': return Colors.red;
-      case 'cancellation_requested': return Colors.deepOrange;
-      default: return appMuted;
+      case 'cancelled':
+        return Colors.red;
+      case 'cancellation_requested':
+        return Colors.deepOrange;
+      default:
+        return appMuted;
     }
   }
 
   String _statusLabel(String s) {
     switch (s) {
-      case 'pending': return 'Pending';
-      case 'accepted': return 'Accepted';
-      case 'in_progress': return 'In Progress';
-      case 'completion_requested': return 'Awaiting Confirmation';
-      case 'completed': return 'Completed';
-      case 'rejected': return 'Declined';
-      case 'cancelled': return 'Cancelled';
-      case 'cancellation_requested': return 'Cancel Requested';
-      default: return s;
+      case 'pending':
+        return 'Pending';
+      case 'accepted':
+        return 'Accepted';
+      case 'in_progress':
+        return 'In Progress';
+      case 'completion_requested':
+        return 'Awaiting Confirmation';
+      case 'completed':
+        return 'Completed';
+      case 'rejected':
+        return 'Declined';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'cancellation_requested':
+        return 'Cancel Requested';
+      default:
+        return s;
     }
   }
 
@@ -1068,7 +1179,9 @@ class _BookingDetailSheet extends StatelessWidget {
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Icon(icon, size: 16, color: appMuted),
           const SizedBox(width: 8),
-          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.w600, color: appMuted, fontSize: 13)),
+          Text('$label: ',
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, color: appMuted, fontSize: 13)),
           Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
         ]),
       );
@@ -1076,7 +1189,8 @@ class _BookingDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(booking.status);
-    final isActive = !['completed', 'rejected', 'cancelled'].contains(booking.status);
+    final isActive =
+        !['completed', 'rejected', 'cancelled'].contains(booking.status);
     final canReschedule = (_isClient && booking.status == 'pending') ||
         (_isWorker && booking.status == 'accepted');
     final otherName = _isClient
@@ -1085,19 +1199,31 @@ class _BookingDetailSheet extends StatelessWidget {
 
     List<(String, String, bool)> actions() {
       if (_isClient) {
-        if (booking.status == 'completion_requested') return [('Confirm Complete', 'completed', true)];
+        if (booking.status == 'completion_requested')
+          return [('Confirm Complete', 'completed', true)];
       }
       if (booking.status == 'pending') {
-        if (_isApprover) return [('Accept', 'accepted', true), ('Decline', 'rejected', false)];
+        if (_isApprover)
+          return [('Accept', 'accepted', true), ('Decline', 'rejected', false)];
         return [('Cancel Booking', 'cancellation_requested', false)];
       }
       if (_isClient) {
-        if (['accepted', 'in_progress'].contains(booking.status)) return [('Cancel Booking', 'cancellation_requested', false)];
+        if (['accepted', 'in_progress'].contains(booking.status))
+          return [('Cancel Booking', 'cancellation_requested', false)];
       } else if (_isWorker) {
-        if (booking.status == 'accepted') return [('Start Job', 'in_progress', true), ('Cancel', 'cancellation_requested', false)];
-        if (booking.status == 'in_progress') return [('Mark Complete', 'completion_requested', true), ('Cancel', 'cancellation_requested', false)];
+        if (booking.status == 'accepted')
+          return [
+            ('Start Job', 'in_progress', true),
+            ('Cancel', 'cancellation_requested', false)
+          ];
+        if (booking.status == 'in_progress')
+          return [
+            ('Mark Complete', 'completion_requested', true),
+            ('Cancel', 'cancellation_requested', false)
+          ];
       }
-      if (booking.status == 'cancellation_requested') return [('Finalize Cancel', 'cancelled', false)];
+      if (booking.status == 'cancellation_requested')
+        return [('Finalize Cancel', 'cancelled', false)];
       return [];
     }
 
@@ -1111,18 +1237,25 @@ class _BookingDetailSheet extends StatelessWidget {
         children: [
           Center(
             child: Container(
-              width: 36, height: 4,
+              width: 36,
+              height: 4,
               margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2)),
             ),
           ),
           // Status badge
           Row(children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
+              decoration: BoxDecoration(
+                  color: color, borderRadius: BorderRadius.circular(20)),
               child: Text(_statusLabel(booking.status),
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12)),
             ),
             const Spacer(),
             Text(DateFormat('MMM d, yyyy').format(booking.createdAt),
@@ -1130,19 +1263,32 @@ class _BookingDetailSheet extends StatelessWidget {
           ]),
           const SizedBox(height: 16),
           Text(booking.serviceCategory,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           Text(_isClient ? 'Worker: $otherName' : 'Client: $otherName',
-              style: const TextStyle(color: appPrimary, fontWeight: FontWeight.w600)),
+              style: const TextStyle(
+                  color: appPrimary, fontWeight: FontWeight.w600)),
           const Divider(height: 24),
           _infoRow(Icons.local_offer_outlined, 'Source', _sourceLabel),
-          _infoRow(Icons.place_outlined, 'Location',
-              booking.municipality + (booking.locationDetails.isNotEmpty ? ' · ${booking.locationDetails}' : '')),
-          _infoRow(Icons.calendar_month_outlined, 'Schedule',
-              booking.scheduledAt == null ? 'Not set' : DateFormat('EEE, MMM d, yyyy · hh:mm a').format(booking.scheduledAt!.toLocal())),
+          _infoRow(
+              Icons.place_outlined,
+              'Location',
+              booking.municipality +
+                  (booking.locationDetails.isNotEmpty
+                      ? ' · ${booking.locationDetails}'
+                      : '')),
+          _infoRow(
+              Icons.calendar_month_outlined,
+              'Schedule',
+              booking.scheduledAt == null
+                  ? 'Not set'
+                  : DateFormat('EEE, MMM d, yyyy · hh:mm a')
+                      .format(booking.scheduledAt!.toLocal())),
           if (booking.notes.isNotEmpty)
             _infoRow(Icons.notes_outlined, 'Notes', booking.notes),
-          if (booking.rescheduleNote != null && booking.rescheduleNote!.isNotEmpty) ...[
+          if (booking.rescheduleNote != null &&
+              booking.rescheduleNote!.isNotEmpty) ...[
             const SizedBox(height: 4),
             Container(
               padding: const EdgeInsets.all(10),
@@ -1151,15 +1297,20 @@ class _BookingDetailSheet extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.orange.withAlpha(60)),
               ),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Icon(Icons.edit_calendar_outlined, size: 14, color: Colors.orange),
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.edit_calendar_outlined,
+                    size: 14, color: Colors.orange),
                 const SizedBox(width: 6),
-                Expanded(child: Text('Rescheduled: ${booking.rescheduleNote}',
-                    style: const TextStyle(fontSize: 12, color: Colors.deepOrange))),
+                Expanded(
+                    child: Text('Rescheduled: ${booking.rescheduleNote}',
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.deepOrange))),
               ]),
             ),
           ],
-          if (booking.cancellationReason != null && booking.cancellationReason!.isNotEmpty) ...[
+          if (booking.cancellationReason != null &&
+              booking.cancellationReason!.isNotEmpty) ...[
             const SizedBox(height: 4),
             Container(
               padding: const EdgeInsets.all(10),
@@ -1168,7 +1319,8 @@ class _BookingDetailSheet extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.red.withAlpha(50)),
               ),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Icon(Icons.info_outline, size: 14, color: Colors.red),
                 const SizedBox(width: 6),
                 Expanded(
@@ -1185,14 +1337,31 @@ class _BookingDetailSheet extends StatelessWidget {
                 child: a.$3
                     ? FilledButton(
                         onPressed: () => onStatus(a.$2),
-                        style: FilledButton.styleFrom(backgroundColor: color, padding: const EdgeInsets.symmetric(vertical: 14)),
-                        child: Text(a.$1, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        style: FilledButton.styleFrom(
+                            backgroundColor: color,
+                            padding: const EdgeInsets.symmetric(vertical: 14)),
+                        child: Text(a.$1,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700)),
                       )
                     : OutlinedButton(
                         onPressed: () => onStatus(a.$2),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: ['rejected', 'cancellation_requested', 'cancelled'].contains(a.$2) ? Colors.red : color,
-                          side: BorderSide(color: ['rejected', 'cancellation_requested', 'cancelled'].contains(a.$2) ? Colors.red : color),
+                          foregroundColor: [
+                            'rejected',
+                            'cancellation_requested',
+                            'cancelled'
+                          ].contains(a.$2)
+                              ? Colors.red
+                              : color,
+                          side: BorderSide(
+                              color: [
+                            'rejected',
+                            'cancellation_requested',
+                            'cancelled'
+                          ].contains(a.$2)
+                                  ? Colors.red
+                                  : color),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         child: Text(a.$1, style: const TextStyle(fontSize: 15)),
@@ -1431,8 +1600,8 @@ class _RescheduleSheetState extends State<_RescheduleSheet> {
       return;
     }
     final t = _time ?? const TimeOfDay(hour: 8, minute: 0);
-    final scheduledAt = DateTime(
-        _date!.year, _date!.month, _date!.day, t.hour, t.minute);
+    final scheduledAt =
+        DateTime(_date!.year, _date!.month, _date!.day, t.hour, t.minute);
 
     setState(() => _saving = true);
     try {
@@ -1445,21 +1614,19 @@ class _RescheduleSheetState extends State<_RescheduleSheet> {
           const SnackBar(content: Text('Date updated successfully.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(friendlyError(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isProvider = widget.booking.workerUserId ==
-        widget.api.storedUser?.id;
+    final isProvider = widget.booking.workerUserId == widget.api.storedUser?.id;
     final dateLabel = _date == null
         ? 'Select new date'
         : DateFormat('EEE, MMM d, yyyy').format(_date!);
-    final timeLabel =
-        _time == null ? 'Select time' : _time!.format(context);
+    final timeLabel = _time == null ? 'Select time' : _time!.format(context);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -1493,8 +1660,7 @@ class _RescheduleSheetState extends State<_RescheduleSheet> {
                     suffixIcon: Icon(Icons.arrow_drop_down),
                   ),
                   child: Text(dateLabel,
-                      style: TextStyle(
-                          color: _date == null ? appMuted : null)),
+                      style: TextStyle(color: _date == null ? appMuted : null)),
                 ),
               ),
             ),
@@ -1511,8 +1677,7 @@ class _RescheduleSheetState extends State<_RescheduleSheet> {
                     enabled: _date != null,
                   ),
                   child: Text(timeLabel,
-                      style: TextStyle(
-                          color: _time == null ? appMuted : null)),
+                      style: TextStyle(color: _time == null ? appMuted : null)),
                 ),
               ),
             ),
