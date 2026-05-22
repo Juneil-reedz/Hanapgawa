@@ -6,8 +6,13 @@ let _initialized = false;
 
 function initFirebase() {
   if (_initialized) return;
-  const serviceAccountPath = path.join(__dirname, '../config/firebase-service-account.json');
-  if (!fs.existsSync(serviceAccountPath)) {
+  // Check local config path first, then Render's secret file mount point
+  const candidates = [
+    path.join(__dirname, '../config/firebase-service-account.json'),
+    '/etc/secrets/firebase-service-account.json',
+  ];
+  const serviceAccountPath = candidates.find(fs.existsSync);
+  if (!serviceAccountPath) {
     console.warn('Firebase service account not found — push notifications disabled.');
     return;
   }
