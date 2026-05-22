@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -57,7 +58,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _initInbox();
     _searchCtrl.addListener(() {
       final q = _searchCtrl.text.trim();
       if (q != _searchQuery) {
@@ -71,6 +72,28 @@ class _BookingsScreenState extends State<BookingsScreen> {
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  // Load persisted last-seen timestamps from SQLite, then start data fetch.
+  Future<void> _initInbox() async {
+    await _loadLastSeen();
+    _load();
+  }
+
+  Future<void> _loadLastSeen() async {
+    final raw = await LocalDb.instance.getSetting('inbox_last_seen');
+    if (raw != null) {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      _lastSeen.addAll(map.map(
+        (k, v) => MapEntry(k, DateTime.fromMillisecondsSinceEpoch(v as int)),
+      ));
+    }
+    if (mounted) setState(() => _initialLoadDone = true);
+  }
+
+  Future<void> _persistLastSeen() async {
+    final map = _lastSeen.map((k, v) => MapEntry(k, v.millisecondsSinceEpoch));
+    await LocalDb.instance.setSetting('inbox_last_seen', jsonEncode(map));
   }
 
   bool _isUnread(Conversation conv) {
@@ -87,10 +110,12 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final conv = _conversations.firstWhere((c) => c.id == convId,
         orElse: () => _conversations.first);
     setState(() => _lastSeen[convId] = conv.updatedAt);
+    _persistLastSeen();
   }
 
   void _markUnread(String convId) {
     setState(() => _lastSeen.remove(convId));
+    _persistLastSeen();
   }
 
   void _togglePin(String convId) {
@@ -195,21 +220,17 @@ class _BookingsScreenState extends State<BookingsScreen> {
         _historyGroupIndex = 0;
         _loading = false;
         _refreshing = false;
-        if (!_initialLoadDone) {
-          // First fresh load — set baseline for ALL conversations so nothing
-          // appears unread on open. Only new activity after this point counts.
-          for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
-          _initialLoadDone = true;
-        } else {
-          // Subsequent reload: update seen timestamp for conversations where
-          // the current user sent the last message (can never be unread to sender).
-          final myId = widget.api.storedUser?.id ?? '';
-          for (final c in convs) {
-            if (c.lastSenderId == myId) {
-              _lastSeen[c.id] = c.updatedAt;
-            }
+        // Auto-mark as seen any conversation where the current user sent the
+        // last message — the sender can never have an unread on their own message.
+        final myId = widget.api.storedUser?.id ?? '';
+        var changed = false;
+        for (final c in convs) {
+          if (c.lastSenderId == myId) {
+            _lastSeen[c.id] = c.updatedAt;
+            changed = true;
           }
         }
+        if (changed) unawaited(_persistLastSeen());
       });
     } catch (error) {
       if (!mounted) return;
@@ -231,17 +252,16 @@ class _BookingsScreenState extends State<BookingsScreen> {
             .cacheConversations(list.map((c) => c.toJson()).toList()));
       }
       if (mounted) {
-        setState(() {
-          _conversations = list;
-          // Auto-mark as seen conversations where the current user sent the last
-          // message — they can never be "new" to the sender.
-          final myId = widget.api.storedUser?.id ?? '';
-          for (final c in list) {
-            if (c.lastSenderId == myId) {
-              _lastSeen[c.id] = c.updatedAt;
-            }
+        final myId = widget.api.storedUser?.id ?? '';
+        var changed = false;
+        for (final c in list) {
+          if (c.lastSenderId == myId) {
+            _lastSeen[c.id] = c.updatedAt;
+            changed = true;
           }
-        });
+        }
+        setState(() => _conversations = list);
+        if (changed) unawaited(_persistLastSeen());
       }
     } catch (_) {
       if (search.isEmpty && mounted) {
