@@ -201,7 +201,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
         `;
         params = [perSource + followedIds.length, followedIds, userId];
       } else {
-        // No follows yet — only show own posts
+        // No follows yet — show recent posts from all users so new users see content
         socialQuery = `
           SELECT sp.id, sp.user_id AS "userId", sp.full_name AS "fullName",
                  COALESCE(up.profile_pic, sp.profile_pic) AS "profilePic",
@@ -213,12 +213,11 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                  sp.created_at AS "createdAt"
           FROM social_posts sp
           LEFT JOIN user_profiles up ON up.user_id = sp.user_id
-          WHERE sp.user_id = $2
-            AND (sp.scheduled_at IS NULL OR sp.scheduled_at <= NOW())
+          WHERE (sp.scheduled_at IS NULL OR sp.scheduled_at <= NOW())
           ORDER BY sp.created_at DESC
           LIMIT $1
         `;
-        params = [perSource, userId];
+        params = [perSource];
       }
 
       const result = await pool.query(socialQuery, params);
