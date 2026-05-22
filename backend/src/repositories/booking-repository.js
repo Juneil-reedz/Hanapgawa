@@ -73,6 +73,7 @@ async function listBookingsForUser(userId) {
         wu.full_name AS "workerName",
         b.service_listing_id AS "serviceListingId",
         b.job_post_id AS "jobPostId",
+        jp.title AS "jobTitle",
         b.service_category AS "serviceCategory",
         b.municipality,
         b.location_details AS "locationDetails",
@@ -94,6 +95,7 @@ async function listBookingsForUser(userId) {
       FROM bookings b
       LEFT JOIN users cu ON cu.id = b.client_user_id
       LEFT JOIN users wu ON wu.id = b.worker_user_id
+      LEFT JOIN job_posts jp ON jp.id = b.job_post_id
       WHERE b.client_user_id = $1 OR b.worker_user_id = $1
       ORDER BY b.created_at DESC
     `,
@@ -108,31 +110,33 @@ async function findBookingById(bookingId) {
   const result = await pool.query(
     `
       SELECT
-        id,
-        client_user_id AS "clientUserId",
-        worker_user_id AS "workerUserId",
-        service_listing_id AS "serviceListingId",
-        job_post_id AS "jobPostId",
-        service_category AS "serviceCategory",
-        municipality,
-        location_details AS "locationDetails",
-        notes,
-        status,
-        previous_status AS "previousStatus",
-        scheduled_at AS "scheduledAt",
-        provider_completed_at AS "providerCompletedAt",
-        client_confirmed_at AS "clientConfirmedAt",
-        cancellation_requested_at AS "cancellationRequestedAt",
-        cancellation_requested_by AS "cancellationRequestedBy",
-        cancellation_reason AS "cancellationReason",
-        source,
-        reposted_job_id AS "repostedJobId",
-        reschedule_note AS "rescheduleNote",
-        rescheduled_at AS "rescheduledAt",
-        created_at AS "createdAt",
-        updated_at AS "updatedAt"
-      FROM bookings
-      WHERE id = $1
+        b.id,
+        b.client_user_id AS "clientUserId",
+        b.worker_user_id AS "workerUserId",
+        b.service_listing_id AS "serviceListingId",
+        b.job_post_id AS "jobPostId",
+        jp.title AS "jobTitle",
+        b.service_category AS "serviceCategory",
+        b.municipality,
+        b.location_details AS "locationDetails",
+        b.notes,
+        b.status,
+        b.previous_status AS "previousStatus",
+        b.scheduled_at AS "scheduledAt",
+        b.provider_completed_at AS "providerCompletedAt",
+        b.client_confirmed_at AS "clientConfirmedAt",
+        b.cancellation_requested_at AS "cancellationRequestedAt",
+        b.cancellation_requested_by AS "cancellationRequestedBy",
+        b.cancellation_reason AS "cancellationReason",
+        b.source,
+        b.reposted_job_id AS "repostedJobId",
+        b.reschedule_note AS "rescheduleNote",
+        b.rescheduled_at AS "rescheduledAt",
+        b.created_at AS "createdAt",
+        b.updated_at AS "updatedAt"
+      FROM bookings b
+      LEFT JOIN job_posts jp ON jp.id = b.job_post_id
+      WHERE b.id = $1
     `,
     [bookingId],
   );

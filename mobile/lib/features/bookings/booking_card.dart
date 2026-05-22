@@ -60,6 +60,10 @@ class _BookingCardState extends State<BookingCard> {
 
   String get _otherLabel => _isClient ? 'Worker' : 'Client';
 
+  String get _displayTitle => booking.jobTitle?.trim().isNotEmpty == true
+      ? booking.jobTitle!.trim()
+      : booking.serviceCategory;
+
   String get _sourceLabel {
     switch (booking.source) {
       case 'job_application':
@@ -232,7 +236,7 @@ class _BookingCardState extends State<BookingCard> {
                   children: [
                     // Service name
                     Text(
-                      booking.serviceCategory,
+                      _displayTitle,
                       style: const TextStyle(
                           fontSize: 16, fontWeight: FontWeight.w800),
                     ),

@@ -201,7 +201,7 @@ async function ensurePostgresSchema() {
   await client.query(`
     CREATE TABLE IF NOT EXISTS reviews (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      booking_id UUID UNIQUE NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+      booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
       reviewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       provider_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
@@ -209,6 +209,11 @@ async function ensurePostgresSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await client.query(`ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_booking_id_key`);
+  await client.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS reviews_booking_reviewer_unique
+    ON reviews (booking_id, reviewer_user_id)
   `);
 
   await client.query(`

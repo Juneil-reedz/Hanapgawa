@@ -1202,6 +1202,10 @@ class _StoryViewerState extends State<_StoryViewer> {
       final played = await _tryPlayStoryMusicUrls(savedUrls, requestId);
       if (played) return;
     }
+    if (!SyncService.instance.isOnline) {
+      await _player.stop();
+      return;
+    }
 
     final searchedUrls = await _searchStoryMusicUrls(requestId);
     final urls = <String>[
@@ -1252,7 +1256,7 @@ class _StoryViewerState extends State<_StoryViewer> {
       if (!await dir.exists()) await dir.create(recursive: true);
       final file = File('${dir.path}/${_stableStoryMusicKey(url)}.mp3');
       if (await file.exists() && await file.length() > 0) return file;
-      if (!download) return null;
+      if (!download || !SyncService.instance.isOnline) return null;
 
       final response = await http.get(Uri.parse(url));
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
@@ -1316,6 +1320,7 @@ class _StoryViewerState extends State<_StoryViewer> {
     for (final url in urls) {
       unawaited(_cachedStoryMusicFile(url, download: true));
     }
+    if (!SyncService.instance.isOnline) return;
     final music = _story.metadata['music']?.toString();
     if (music != null && music.isNotEmpty) {
       unawaited(_storyMusicUrlsForQuery(music).then((urls) {

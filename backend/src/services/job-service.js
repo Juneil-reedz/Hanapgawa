@@ -147,7 +147,7 @@ async function chooseOffer({ jobPostId, offerId, auth }) {
     jobPostId,
   });
 
-  return { ...result, booking };
+  return { ...result, booking: { ...booking, jobTitle: result.jobPost.title } };
 }
 
 async function rejectOffer({ jobPostId, offerId, auth }) {

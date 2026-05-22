@@ -20,8 +20,14 @@ async function createReview({ bookingId, reviewerUserId, reviewedUserId, rating,
        booking_id, reviewer_user_id, provider_user_id, rating, comment
      )
      VALUES ($1, $2, $3, $4, $5)
-     RETURNING
-       id,
+     ON CONFLICT (booking_id, reviewer_user_id)
+     DO UPDATE SET
+       provider_user_id = EXCLUDED.provider_user_id,
+       rating = EXCLUDED.rating,
+       comment = EXCLUDED.comment,
+       updated_at = NOW()
+      RETURNING
+        id,
        booking_id       AS "bookingId",
        reviewer_user_id AS "reviewerUserId",
        provider_user_id AS "reviewedUserId",

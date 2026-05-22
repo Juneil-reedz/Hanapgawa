@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1357,12 +1358,10 @@ class _FeedCardState extends State<FeedCard> {
             ),
           ],
           // Multiple media items (new posts)
-          if (post.metadata['mediaItems'] is List &&
-              (post.metadata['mediaItems'] as List).isNotEmpty) ...[
+          if (_postMediaItems(post).isNotEmpty) ...[
             const SizedBox(height: 10),
             _PostMediaGrid(
-                items: List<Map<String, dynamic>>.from(
-                    post.metadata['mediaItems'] as List),
+                items: _postMediaItems(post),
                 onVideoPlay: _handlePostVideoPlay),
           ] else ...[
             // Legacy single image / video
@@ -1459,12 +1458,10 @@ class PostMetadata extends StatelessWidget {
         ),
       if (metadata['location'] != null)
         (icon: Icons.place_outlined, label: '${metadata['location']}'),
-      if (metadata['gif'] != null) (icon: Icons.gif_box_outlined, label: 'GIF'),
       if (metadata['music'] != null)
         (icon: Icons.music_note_outlined, label: '${metadata['music']}'),
     ];
 
-    final gif = metadata['gif']?.toString();
     final sticker = metadata['sticker']?.toString();
     final hasSticker = sticker != null && sticker.isNotEmpty;
 
@@ -1497,21 +1494,6 @@ class PostMetadata extends StatelessWidget {
                       ],
                     ))
                 .toList(),
-          ),
-          const SizedBox(height: 6),
-        ],
-        // GIF and sticker below the text tags
-        if (gif != null &&
-            (gif.startsWith('http://') || gif.startsWith('https://'))) ...[
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              gif,
-              height: 180,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-            ),
           ),
           const SizedBox(height: 6),
         ],
@@ -1558,15 +1540,16 @@ class SharedPostPreview extends StatelessWidget {
       final body = snapshot['body']?.toString() ?? '';
       final image = snapshot['image']?.toString();
       final video = snapshot['video']?.toString();
-      final mediaItems = snapshot['mediaItems'] is List
-          ? List<Map<String, dynamic>>.from((snapshot['mediaItems'] as List)
-              .whereType<Map>()
-              .map((m) => Map<String, dynamic>.from(m)))
-          : const <Map<String, dynamic>>[];
       final metadata = snapshot['metadata'] is Map
           ? Map<String, dynamic>.from(snapshot['metadata'] as Map)
           : <String, dynamic>{};
       final gif = snapshot['gif']?.toString();
+      final mediaItems = _mediaItemsWithGif(
+          rawItems: snapshot['mediaItems'],
+          metadata: metadata,
+          fallbackImage: image,
+          fallbackVideo: video,
+          fallbackGif: gif);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(snapshot['authorName']?.toString() ?? 'User',
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
@@ -1602,18 +1585,6 @@ class SharedPostPreview extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
               child: _InlineVideoPlayer(base64Video: video),
-            ),
-          ),
-        ] else if (gif != null && gif.startsWith('http')) ...[
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              gif,
-              height: 120,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
           ),
         ],
@@ -1696,6 +1667,41 @@ class SharedPostPreview extends StatelessWidget {
 
     return const SizedBox.shrink();
   }
+}
+
+List<Map<String, dynamic>> _postMediaItems(SocialPost post) =>
+    _mediaItemsWithGif(
+        rawItems: post.metadata['mediaItems'],
+        metadata: post.metadata,
+        fallbackImage: post.image,
+        fallbackVideo: post.video);
+
+List<Map<String, dynamic>> _mediaItemsWithGif({
+  required dynamic rawItems,
+  required Map<String, dynamic> metadata,
+  String? fallbackImage,
+  String? fallbackVideo,
+  String? fallbackGif,
+}) {
+  final items = rawItems is List
+      ? List<Map<String, dynamic>>.from(rawItems
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item)))
+      : <Map<String, dynamic>>[];
+  if (items.isEmpty) {
+    if (fallbackImage?.isNotEmpty == true) {
+      items.add({'type': 'image', 'url': fallbackImage!});
+    }
+    if (fallbackVideo?.isNotEmpty == true) {
+      items.add({'type': 'video', 'url': fallbackVideo!});
+    }
+  }
+  final gif = (metadata['gif'] ?? fallbackGif)?.toString().trim();
+  if (gif != null && gif.startsWith('http')) {
+    final alreadyIncluded = items.any((item) => item['url']?.toString() == gif);
+    if (!alreadyIncluded) items.add({'type': 'gif', 'url': gif});
+  }
+  return items;
 }
 
 Widget _sharedImage(String source,
@@ -2252,6 +2258,9 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       cached.touch();
       _attachPlaybackMonitor(cached.controller);
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _init();
+    });
   }
 
   Future<void> _init() async {
@@ -2374,6 +2383,19 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     VideoPlayerController ctrl;
     if (source.startsWith('http://') || source.startsWith('https://')) {
       final transformed = _toCloudinaryMp4(source);
+      final cachedFile = await _cachedPostVideoFile(source, download: false) ??
+          await _cachedPostVideoFile(transformed, download: false);
+      if (cachedFile != null) {
+        ctrl = VideoPlayerController.file(
+          cachedFile,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        await ctrl.initialize();
+        return ctrl;
+      }
+      if (!SyncService.instance.isOnline) {
+        throw Exception('Video is not cached for offline playback.');
+      }
       ctrl = VideoPlayerController.networkUrl(
         Uri.parse(source),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -2393,6 +2415,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
           rethrow;
         }
       }
+      unawaited(_cachedPostVideoFile(transformed, download: true));
     } else {
       final payload = source.contains(',') ? source.split(',').last : source;
       final bytes = base64Decode(payload);
@@ -2406,6 +2429,41 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       await ctrl.initialize();
     }
     return ctrl;
+  }
+
+  Future<File?> _cachedPostVideoFile(String url,
+      {required bool download}) async {
+    try {
+      final dir =
+          Directory('${(await getTemporaryDirectory()).path}/post_videos');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final file = File('${dir.path}/${_stablePostVideoKey(url)}.mp4');
+      if (await file.exists() && await file.length() > 0) return file;
+      if (!download || !SyncService.instance.isOnline) return null;
+
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(Uri.parse(url));
+        final response = await request.close();
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return null;
+        }
+        await response.pipe(file.openWrite());
+        return await file.length() > 0 ? file : null;
+      } finally {
+        client.close(force: true);
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _stablePostVideoKey(String url) {
+    var hash = 5381;
+    for (final unit in url.codeUnits) {
+      hash = ((hash << 5) + hash + unit) & 0x3fffffff;
+    }
+    return '${url.length}_$hash';
   }
 
   @override

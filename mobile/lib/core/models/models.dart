@@ -668,6 +668,7 @@ class Booking {
     String? workerName,
     this.serviceListingId,
     this.jobPostId,
+    this.jobTitle,
     required this.serviceCategory,
     required this.municipality,
     required this.locationDetails,
@@ -693,6 +694,7 @@ class Booking {
   final String? workerName;
   final String? serviceListingId;
   final String? jobPostId;
+  final String? jobTitle;
   final String serviceCategory;
   final String municipality;
   final String locationDetails;
@@ -717,6 +719,7 @@ class Booking {
         workerName: json['workerName']?.toString(),
         serviceListingId: json['serviceListingId']?.toString(),
         jobPostId: json['jobPostId']?.toString(),
+        jobTitle: json['jobTitle']?.toString(),
         serviceCategory: json['serviceCategory']?.toString() ?? '',
         municipality: json['municipality']?.toString() ?? '',
         locationDetails: json['locationDetails']?.toString() ?? '',
@@ -745,6 +748,7 @@ class Booking {
         'workerName': workerName,
         'serviceListingId': serviceListingId,
         'jobPostId': jobPostId,
+        'jobTitle': jobTitle,
         'serviceCategory': serviceCategory,
         'municipality': municipality,
         'locationDetails': locationDetails,

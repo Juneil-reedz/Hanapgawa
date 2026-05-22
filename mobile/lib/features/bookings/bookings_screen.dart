@@ -112,7 +112,11 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final q = _searchQuery.toLowerCase();
     if (q.isEmpty) return _historyBookings;
     return _historyBookings.where((b) {
-      return b.serviceCategory.toLowerCase().contains(q) ||
+      final title = b.jobTitle?.trim().isNotEmpty == true
+          ? b.jobTitle!.toLowerCase()
+          : b.serviceCategory.toLowerCase();
+      return title.contains(q) ||
+          b.serviceCategory.toLowerCase().contains(q) ||
           b.notes.toLowerCase().contains(q) ||
           b.locationDetails.toLowerCase().contains(q) ||
           (b.workerName ?? '').toLowerCase().contains(q) ||
@@ -345,7 +349,9 @@ class _BookingsScreenState extends State<BookingsScreen> {
   Future<void> _repostBooking(Booking booking) async {
     final payload = JobPostPayload(
       postType: 'looking_for_worker',
-      title: booking.serviceCategory,
+      title: booking.jobTitle?.trim().isNotEmpty == true
+          ? booking.jobTitle!.trim()
+          : booking.serviceCategory,
       category: booking.serviceCategory,
       municipality: booking.municipality,
       locationDetails: booking.locationDetails,
@@ -423,7 +429,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
       // No existing conversation — create one
       try {
         final convJson = await widget.api.startInquiry(otherUserId,
-            'Hi, regarding our booking for ${booking.serviceCategory}.');
+            'Hi, regarding our booking for ${booking.jobTitle?.trim().isNotEmpty == true ? booking.jobTitle!.trim() : booking.serviceCategory}.');
         conv = Conversation(
           id: convJson['id']?.toString() ?? '',
           clientUserId: myId,
@@ -1129,6 +1135,10 @@ class _BookingDetailSheet extends StatelessWidget {
     }
   }
 
+  String get _displayTitle => booking.jobTitle?.trim().isNotEmpty == true
+      ? booking.jobTitle!.trim()
+      : booking.serviceCategory;
+
   Color _statusColor(String s) {
     switch (s) {
       case 'pending':
@@ -1262,7 +1272,7 @@ class _BookingDetailSheet extends StatelessWidget {
                 style: const TextStyle(color: appMuted, fontSize: 12)),
           ]),
           const SizedBox(height: 16),
-          Text(booking.serviceCategory,
+          Text(_displayTitle,
               style:
                   const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
