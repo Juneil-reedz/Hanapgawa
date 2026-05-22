@@ -488,6 +488,9 @@ class MarketplaceApi {
   Future<void> updateAdminUserStatus(String userId, String status) async =>
       _patch('/admin/users/$userId/status', {'status': status}, auth: true);
 
+  Future<void> deleteAdminUser(String userId) async =>
+      _deleteVoid('/admin/users/$userId', auth: true);
+
   Future<void> updateProviderApproval(String userId, String status) async =>
       _patch('/admin/providers/$userId/status', {'status': status}, auth: true);
 

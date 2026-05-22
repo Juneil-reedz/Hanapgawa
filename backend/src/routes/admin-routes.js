@@ -380,6 +380,21 @@ router.delete(
 );
 
 router.delete(
+  '/users/:userId',
+  asyncHandler(async (req, res) => {
+    const userId = z.uuid().safeParse(req.params.userId);
+    if (!userId.success) throw new HttpError(400, 'Invalid user id.');
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+    const user = await findUserById(userId.data);
+    if (!user) throw new HttpError(404, 'User not found.');
+    if (user.role === 'admin') throw new HttpError(403, 'Admin accounts cannot be deleted here.');
+    await pool.query('DELETE FROM users WHERE id = $1', [userId.data]);
+    res.json({ deleted: true, user });
+  }),
+);
+
+router.delete(
   '/users/by-email',
   asyncHandler(async (req, res) => {
     const email = z.string().email().safeParse(req.body?.email);

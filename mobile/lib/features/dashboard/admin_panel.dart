@@ -179,6 +179,27 @@ class _AdminPanelState extends State<AdminPanel> {
 
   bool get _offline => widget.isOffline || !SyncService.instance.isOnline;
 
+  Future<void> _deleteUser(SessionUser user) async {
+    final ok = await _confirm(
+      'Delete user?',
+      'This will permanently delete ${user.fullName ?? user.email} and all their data. This cannot be undone.',
+      confirmLabel: 'Delete',
+      confirmColor: Colors.red.shade700,
+    );
+    if (!ok) return;
+    try {
+      if (_offline) {
+        _show('User deletion requires a connection.');
+        return;
+      }
+      await widget.api.deleteAdminUser(user.id);
+      await widget.reload();
+      _show('User deleted.');
+    } catch (e) {
+      _show(friendlyError(e));
+    }
+  }
+
   Future<void> _updateUser(String userId, String status) async {
     if (status == 'suspended' || status == 'banned') {
       final ok = await _confirm(
@@ -326,6 +347,7 @@ class _AdminPanelState extends State<AdminPanel> {
             onQueryChanged: (v) => setState(() => _query = v),
             onFilterChanged: (v) => setState(() => _userFilter = v),
             onUpdateUser: _updateUser,
+            onDeleteUser: _deleteUser,
           ),
         _Tab.reports => _ReportsSection(
             reports: _filteredReports,
@@ -654,6 +676,7 @@ class _UsersSection extends StatelessWidget {
     required this.onQueryChanged,
     required this.onFilterChanged,
     required this.onUpdateUser,
+    required this.onDeleteUser,
   });
   final List<SessionUser> users;
   final List<SessionUser> allUsers;
@@ -662,6 +685,7 @@ class _UsersSection extends StatelessWidget {
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<String> onFilterChanged;
   final Future<void> Function(String, String) onUpdateUser;
+  final Future<void> Function(SessionUser) onDeleteUser;
 
   int _count(String status) => status == 'all'
       ? allUsers.length
@@ -713,15 +737,17 @@ class _UsersSection extends StatelessWidget {
           ...users.map((user) => _UserCard(
                 user: user,
                 onUpdate: onUpdateUser,
+                onDelete: onDeleteUser,
               )),
         ],
       );
 }
 
 class _UserCard extends StatelessWidget {
-  const _UserCard({required this.user, required this.onUpdate});
+  const _UserCard({required this.user, required this.onUpdate, required this.onDelete});
   final SessionUser user;
   final Future<void> Function(String, String) onUpdate;
+  final Future<void> Function(SessionUser) onDelete;
 
   Color _roleColor(String role) => switch (role) {
         'admin' => appPrimary,
@@ -803,6 +829,12 @@ class _UserCard extends StatelessWidget {
                 color: Colors.red.shade700,
                 onTap: () => onUpdate(user.id, 'banned'),
               ),
+            _ActionBtn(
+              label: 'Delete',
+              icon: Icons.delete_outline,
+              color: Colors.red.shade900,
+              onTap: () => onDelete(user),
+            ),
           ]),
         ],
       ]),
