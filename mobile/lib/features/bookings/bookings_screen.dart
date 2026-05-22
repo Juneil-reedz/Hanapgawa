@@ -156,20 +156,17 @@ class _BookingsScreenState extends State<BookingsScreen> {
   }
 
   Future<void> _load() async {
-    // 1. Show cached data immediately — no full-screen spinner if cache exists
+    // 1. Show cached data immediately — no full-screen spinner if cache exists.
+    //    Do NOT set _initialLoadDone or _lastSeen from cache: stale timestamps
+    //    cause false "unread" badges when fresh data arrives with newer updatedAt.
     if (_bookings.isEmpty && _conversations.isEmpty) {
       final cachedBookings = await LocalDb.instance.getCachedBookings();
       final cachedConvs = await LocalDb.instance.getCachedConversations();
       if ((cachedBookings.isNotEmpty || cachedConvs.isNotEmpty) && mounted) {
-        final convs = cachedConvs.map(Conversation.fromJson).toList();
         setState(() {
           _bookings = cachedBookings.map(Booking.fromJson).toList();
-          _conversations = convs;
+          _conversations = cachedConvs.map(Conversation.fromJson).toList();
           _message = '';
-          if (!_initialLoadDone) {
-            for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
-            _initialLoadDone = true;
-          }
         });
       } else if (mounted) {
         setState(() => _loading = true);
@@ -199,10 +196,13 @@ class _BookingsScreenState extends State<BookingsScreen> {
         _loading = false;
         _refreshing = false;
         if (!_initialLoadDone) {
+          // First fresh load — set baseline for ALL conversations so nothing
+          // appears unread on open. Only new activity after this point counts.
           for (final c in convs) { _lastSeen[c.id] = c.updatedAt; }
           _initialLoadDone = true;
         } else {
-          // Subsequent reload: auto-mark as seen where we sent the last message.
+          // Subsequent reload: update seen timestamp for conversations where
+          // the current user sent the last message (can never be unread to sender).
           final myId = widget.api.storedUser?.id ?? '';
           for (final c in convs) {
             if (c.lastSenderId == myId) {
