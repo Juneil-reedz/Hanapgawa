@@ -131,24 +131,103 @@ router.delete(
   }),
 );
 
+// GET /users/me/followers — users who follow me
+router.get(
+  '/me/followers',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const pool = getPostgresPool();
+    if (!pool) return res.json({ users: [] });
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name AS "fullName", u.role, u.status,
+              up.profile_pic AS "profilePic", up.bio,
+              COALESCE(fc.followers, 0)::int AS followers,
+              COALESCE(pc.posts, 0)::int AS posts
+       FROM follows f
+       JOIN users u ON u.id = f.follower_user_id
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       LEFT JOIN (
+         SELECT following_user_id, COUNT(*)::int AS followers
+         FROM follows GROUP BY following_user_id
+       ) fc ON fc.following_user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, COUNT(*)::int AS posts
+         FROM social_posts GROUP BY user_id
+       ) pc ON pc.user_id = u.id
+       WHERE f.following_user_id = $1
+       ORDER BY u.full_name`,
+      [req.auth.sub],
+    );
+
+    res.json({ users: result.rows });
+  }),
+);
+
+// GET /users/me/following — users I follow
+router.get(
+  '/me/following',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const pool = getPostgresPool();
+    if (!pool) return res.json({ users: [] });
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name AS "fullName", u.role, u.status,
+              up.profile_pic AS "profilePic", up.bio,
+              COALESCE(fc.followers, 0)::int AS followers,
+              COALESCE(pc.posts, 0)::int AS posts
+       FROM follows f
+       JOIN users u ON u.id = f.following_user_id
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       LEFT JOIN (
+         SELECT following_user_id, COUNT(*)::int AS followers
+         FROM follows GROUP BY following_user_id
+       ) fc ON fc.following_user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, COUNT(*)::int AS posts
+         FROM social_posts GROUP BY user_id
+       ) pc ON pc.user_id = u.id
+       WHERE f.follower_user_id = $1
+       ORDER BY u.full_name`,
+      [req.auth.sub],
+    );
+
+    res.json({ users: result.rows });
+  }),
+);
+
 // GET /users/me/profile-data — get own profile data
 router.get(
   '/me/profile-data',
   authenticate,
   asyncHandler(async (req, res) => {
     const pool = getPostgresPool();
-    if (!pool) return res.json({ profileData: null });
+    if (!pool) return res.json({ profileData: null, followerCount: 0, followingCount: 0 });
 
-    const result = await pool.query(
-      `SELECT bio, address, school, birthday, work,
-              current_city AS "currentCity", hometown,
-              relationship_status AS "relationshipStatus", featured,
-              profile_pic AS "profilePic", cover_pic AS "coverPic"
-       FROM user_profiles WHERE user_id = $1`,
-      [req.auth.sub],
-    );
+    const [profileResult, countResult] = await Promise.all([
+      pool.query(
+        `SELECT bio, address, school, birthday, work,
+                current_city AS "currentCity", hometown,
+                relationship_status AS "relationshipStatus", featured,
+                profile_pic AS "profilePic", cover_pic AS "coverPic"
+         FROM user_profiles WHERE user_id = $1`,
+        [req.auth.sub],
+      ),
+      pool.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM follows WHERE following_user_id = $1) AS "followerCount",
+           (SELECT COUNT(*)::int FROM follows WHERE follower_user_id = $1) AS "followingCount"`,
+        [req.auth.sub],
+      ),
+    ]);
 
-    res.json({ profileData: result.rows[0] || null });
+    const counts = countResult.rows[0] || { followerCount: 0, followingCount: 0 };
+    res.json({
+      profileData: profileResult.rows[0] || null,
+      followerCount: counts.followerCount,
+      followingCount: counts.followingCount,
+    });
   }),
 );
 
