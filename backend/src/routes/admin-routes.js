@@ -379,6 +379,22 @@ router.delete(
   }),
 );
 
+router.delete(
+  '/users/by-email',
+  asyncHandler(async (req, res) => {
+    const email = z.string().email().safeParse(req.body?.email);
+    if (!email.success) throw new HttpError(400, 'Valid email is required.');
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+    const result = await pool.query(
+      'DELETE FROM users WHERE email = $1 RETURNING id, email, full_name AS "fullName"',
+      [email.data],
+    );
+    if (!result.rows.length) throw new HttpError(404, 'No user found with that email.');
+    res.json({ deleted: true, user: result.rows[0] });
+  }),
+);
+
 router.get(
   '/reports',
   asyncHandler(async (req, res) => {
