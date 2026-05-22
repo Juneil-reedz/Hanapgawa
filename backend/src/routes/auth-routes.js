@@ -4,6 +4,7 @@ const { z } = require('zod');
 const { asyncHandler } = require('../lib/async-handler');
 const { HttpError } = require('../lib/http-error');
 const { authenticate } = require('../middleware/authenticate');
+const bcrypt = require('bcrypt');
 const {
   loginUser,
   registerUser,
@@ -12,6 +13,8 @@ const {
   verifyEmail,
   verifyExternalToken,
 } = require('../services/auth-service');
+const { createUser, findUserByEmail } = require('../repositories/user-repository');
+const { getPostgresPool } = require('../db/postgres');
 
 const router = express.Router();
 
@@ -129,6 +132,52 @@ router.post(
 
     const payload = verifyExternalToken(token);
     res.json({ valid: true, payload });
+  }),
+);
+
+// ONE-SHOT admin seed — only works when zero admin accounts exist.
+// Remove this endpoint after the admin account is created.
+const jwt = require('jsonwebtoken');
+const { env } = require('../config/env');
+
+router.post(
+  '/seed-admin',
+  asyncHandler(async (req, res) => {
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+
+    // Self-lock: refuse if any admin already exists
+    const check = await pool.query(`SELECT id FROM users WHERE role = 'admin' LIMIT 1`);
+    if (check.rows.length > 0) {
+      throw new HttpError(403, 'An admin account already exists. Endpoint disabled.');
+    }
+
+    const body = z.object({
+      email: z.email(),
+      password: z.string().min(8),
+      fullName: z.string().min(2).max(120),
+    }).safeParse(req.body);
+    if (!body.success) throw new HttpError(400, 'email, password (min 8), fullName required.');
+
+    const existing = await findUserByEmail(body.data.email);
+    if (existing) throw new HttpError(409, 'Email already registered.');
+
+    const passwordHash = await bcrypt.hash(body.data.password, 10);
+    const user = await createUser({
+      email: body.data.email,
+      passwordHash,
+      role: 'admin',
+      fullName: body.data.fullName,
+      emailVerifiedAt: new Date(),
+    });
+
+    const token = jwt.sign(
+      { sub: user.id, email: user.email, role: user.role },
+      env.jwtSecret,
+      { expiresIn: env.jwtExpiresIn },
+    );
+
+    res.status(201).json({ user, token });
   }),
 );
 
