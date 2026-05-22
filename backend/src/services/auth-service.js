@@ -178,7 +178,6 @@ async function signInWithGoogle({ idToken }) {
   }
 
   let ticket;
-
   try {
     ticket = await googleClient.verifyIdToken({
       idToken,
@@ -189,30 +188,36 @@ async function signInWithGoogle({ idToken }) {
   }
 
   const payload = ticket.getPayload();
-
   if (!payload?.email || !payload.email_verified) {
     throw new HttpError(401, 'Google account email must be verified.');
   }
 
   let user = await findUserByEmail(payload.email);
 
-  if (user && !user.emailVerifiedAt) {
-    user = await markUserEmailVerified(user.id);
-  }
-
-  if (user && ['suspended', 'banned'].includes(user.status)) {
-    throw new HttpError(403, 'This account is not allowed to access HanapGawa.');
-  }
-
+  // First-time Google user: create a pending account
   if (!user) {
     const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
     user = await createUser({
       email: payload.email,
       passwordHash,
-      role: 'user',
+      role: 'client',
       fullName: payload.name || payload.email.split('@')[0],
-      emailVerifiedAt: new Date(),
     });
+  }
+
+  if (['suspended', 'banned'].includes(user.status)) {
+    throw new HttpError(403, 'This account is not allowed to access HanapGawa.');
+  }
+
+  // Needs email verification — send code so user proves they own the address
+  if (!user.emailVerifiedAt) {
+    const verification = await createVerificationCode(user);
+    return {
+      emailVerificationRequired: true,
+      email: user.email,
+      emailSent: verification.emailSent,
+      ...(!verification.emailSent && env.nodeEnv !== 'production' ? { devVerificationCode: verification.code } : {}),
+    };
   }
 
   return {
