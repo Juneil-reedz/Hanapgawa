@@ -31,6 +31,8 @@ const env = {
   livekitApiSecret: process.env.LIVEKIT_API_SECRET || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   groqApiKey: process.env.GROQ_API_KEY || '',
+  gatewayInternalSecret: process.env.GATEWAY_INTERNAL_SECRET || '',
+  gatewayJwksUrl: process.env.GATEWAY_JWKS_URL || 'https://tawi-tawi-backend.onrender.com/.well-known/jwks.json',
 };
 
 module.exports = { env };

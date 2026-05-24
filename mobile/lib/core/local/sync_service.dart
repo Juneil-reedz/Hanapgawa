@@ -58,11 +58,12 @@ class SyncService {
           .get(Uri.parse('$baseUrl/health'))
           .timeout(const Duration(seconds: 20));
       if (response.statusCode >= 500) return false;
-      // Parse the JSON body — only consider truly online if postgres is healthy
+      // Parse the JSON body — only consider truly online if postgres is connected
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final databases = body['databases'] as Map<String, dynamic>?;
-      final postgres = databases?['postgres'] as Map<String, dynamic>?;
-      return postgres?['healthy'] == true;
+      final pg = databases?['postgres'];
+      if (pg is Map) return pg['healthy'] == true;
+      return pg == 'connected';
     } catch (_) {
       return false;
     }

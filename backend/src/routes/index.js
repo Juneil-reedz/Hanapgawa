@@ -8,6 +8,7 @@ const { bookingRoutes } = require('./booking-routes');
 const { categoryRoutes } = require('./category-routes');
 const { feedbackRoutes } = require('./feedback-routes');
 const { feedRoutes } = require('./feed-routes');
+const { gatewayRoutes } = require('./gateway-routes'); // Imported the Gateway routes
 const { healthRoutes } = require('./health-routes');
 const { inquiryRoutes } = require('./inquiry-routes');
 const { jobRoutes } = require('./job-routes');
@@ -32,6 +33,7 @@ router.use('/bookings', bookingRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/feed', feedRoutes);
+router.use('/gateway', gatewayRoutes); // Mounted the B2B Gateway integration
 router.use('/inquiries', inquiryRoutes);
 router.use('/jobs', jobRoutes);
 router.use('/media', mediaRoutes);
