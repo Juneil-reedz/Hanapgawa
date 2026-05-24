@@ -199,7 +199,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
           ORDER BY sp.created_at DESC
           LIMIT $1
         `;
-        params = [perSource + followedIds.length, followedIds, userId];
+        params = [limit, followedIds, userId];
       } else {
         // No follows yet — show recent posts from all users so new users see content
         socialQuery = `
@@ -217,7 +217,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
           ORDER BY sp.created_at DESC
           LIMIT $1
         `;
-        params = [perSource];
+        params = [limit];
       }
 
       const result = await pool.query(socialQuery, params);

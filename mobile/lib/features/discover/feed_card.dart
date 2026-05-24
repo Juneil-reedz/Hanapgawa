@@ -23,17 +23,50 @@ import 'post_detail_screen.dart';
 import 'provider_detail_screen.dart';
 import 'user_profile_screen.dart';
 
+/// Shared follow-state tracker passed to every FeedCard in the same feed.
+/// Optimistically updates all cards for an author on follow, reverts on error.
+class FeedFollowTracker extends ChangeNotifier {
+  final Map<String, bool> _following = {};
+  final Set<String> _pending = {};
+
+  /// Seeds initial state for an author without overwriting an already-known state.
+  void seed(String userId, {required bool following}) {
+    _following.putIfAbsent(userId, () => following);
+  }
+
+  bool isFollowing(String userId) => _following[userId] ?? false;
+  bool isPending(String userId) => _pending.contains(userId);
+
+  /// Optimistically marks [userId] as followed, calls [apiCall], reverts on failure.
+  Future<void> follow(String userId, Future<void> Function() apiCall) async {
+    _following[userId] = true;
+    _pending.add(userId);
+    notifyListeners();
+    try {
+      await apiCall();
+    } catch (_) {
+      _following[userId] = false;
+      rethrow;
+    } finally {
+      _pending.remove(userId);
+      notifyListeners();
+    }
+  }
+}
+
 class FeedCard extends StatefulWidget {
   const FeedCard(
       {super.key,
       required this.item,
       required this.api,
       required this.reload,
-      this.readOnly = false});
+      this.readOnly = false,
+      this.followTracker});
   final FeedItem item;
   final MarketplaceApi api;
   final Future<void> Function() reload;
   final bool readOnly;
+  final FeedFollowTracker? followTracker;
 
   static Future<void> stopAllMusic() => _FeedCardState._stopAllMusic();
 
@@ -897,6 +930,92 @@ class _FeedCardState extends State<FeedCard> {
     }
   }
 
+  // ── Follow button (shared tracker or local fallback) ──────────────────────
+
+  Widget _buildFollowButton(SocialPost post) {
+    if (widget.readOnly ||
+        widget.api.token.isEmpty ||
+        widget.api.storedUser?.id == post.userId) {
+      return const SizedBox.shrink();
+    }
+
+    final tracker = widget.followTracker;
+    if (tracker != null) {
+      return ListenableBuilder(
+        listenable: tracker,
+        builder: (_, __) {
+          if (tracker.isFollowing(post.userId)) return const SizedBox.shrink();
+          if (tracker.isPending(post.userId)) {
+            return const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          }
+          return TextButton(
+            onPressed: () => _handleTrackerFollow(post.userId),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              foregroundColor: appPrimary,
+            ),
+            child: const Text('Follow',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+          );
+        },
+      );
+    }
+
+    // Local fallback when no tracker is provided
+    if (_followingAuthor) return const SizedBox.shrink();
+    if (_followingInProgress) {
+      return const SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return TextButton(
+      onPressed: () => _handleLocalFollow(post.userId),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: appPrimary,
+      ),
+      child: const Text('Follow',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+    );
+  }
+
+  Future<void> _handleTrackerFollow(String userId) async {
+    try {
+      await widget.followTracker!
+          .follow(userId, () => widget.api.followUser(userId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+      }
+    }
+  }
+
+  Future<void> _handleLocalFollow(String userId) async {
+    setState(() => _followingInProgress = true);
+    try {
+      await widget.api.followUser(userId);
+      if (mounted) setState(() => _followingAuthor = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _followingInProgress = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     Color accentColor;
@@ -1346,37 +1465,7 @@ class _FeedCardState extends State<FeedCard> {
             ]),
           ),
         ),
-        // Follow button — shown when not following the author
-        if (!_followingAuthor &&
-            !widget.readOnly &&
-            widget.api.token.isNotEmpty &&
-            widget.api.storedUser?.id != post.userId)
-          _followingInProgress
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : TextButton(
-                  onPressed: () async {
-                    setState(() => _followingInProgress = true);
-                    try {
-                      await widget.api.followUser(post.userId);
-                      if (mounted) setState(() => _followingAuthor = true);
-                    } finally {
-                      if (mounted) setState(() => _followingInProgress = false);
-                    }
-                  },
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: appPrimary,
-                  ),
-                  child: const Text('Follow',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 12)),
-                ),
+        _buildFollowButton(post),
         // CRUD / chevron — standalone, never inside a parent GestureDetector
         if (_canAdminManageSocialPost)
           Material(

@@ -461,6 +461,7 @@ router.get(
        ) pc ON pc.user_id = u.id
        WHERE u.email_verified_at IS NOT NULL
          AND u.id != $1
+         AND u.role != 'admin'
          AND u.id NOT IN (
            SELECT following_user_id FROM follows WHERE follower_user_id = $1
          )

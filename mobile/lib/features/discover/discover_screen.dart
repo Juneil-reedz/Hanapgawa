@@ -74,6 +74,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   // Feed category filter
   var _selectedCategory = 'All';
 
+  final _followTracker = FeedFollowTracker();
+
   String? _myProfilePic;
   var _loggingOut = false;
 
@@ -107,6 +109,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     _searchDebounce?.cancel();
     _connectivitySub?.cancel();
     _search.dispose();
+    _followTracker.dispose();
     super.dispose();
   }
 
@@ -187,6 +190,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         _message = socialItems.isEmpty ? 'No posts yet.' : '';
         _loading = false;
       });
+      _seedFollowTracker(socialItems);
       // Cache successful results for offline use
       _cacheFeedInBackground(socialItems);
     } catch (error) {
@@ -235,9 +239,19 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         _message = '';
         _loading = false;
       });
+      _seedFollowTracker(items);
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  void _seedFollowTracker(List<FeedItem> items) {
+    for (final item in items) {
+      final userId = item.socialPost?.userId;
+      if (userId != null && userId.isNotEmpty) {
+        _followTracker.seed(userId, following: item.isFollowingAuthor);
+      }
     }
   }
 
@@ -758,7 +772,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 item: item,
                 api: widget.api,
                 reload: _loadFeed,
-                readOnly: widget.readOnly),
+                readOnly: widget.readOnly,
+                followTracker: _followTracker),
           );
         },
       ),
@@ -797,7 +812,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               item: item,
               api: widget.api,
               reload: _loadFeed,
-              readOnly: widget.readOnly)),
+              readOnly: widget.readOnly,
+              followTracker: _followTracker)),
       ],
     );
   }
