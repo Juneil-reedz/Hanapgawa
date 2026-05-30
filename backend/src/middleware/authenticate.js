@@ -48,6 +48,8 @@ function authenticate(req, _res, next) {
       if (err) {
         return next(new HttpError(401, 'Super App token expired or invalid.'));
       }
+      // Normalize: Tawi-Tawi uses 'id' claim; HanapGawa routes expect 'sub'
+      if (!decoded.sub && decoded.id) decoded.sub = decoded.id;
       req.auth = decoded;
       return next();
     });
