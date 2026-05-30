@@ -48,8 +48,11 @@ function authenticate(req, _res, next) {
       if (err) {
         return next(new HttpError(401, 'Super App token expired or invalid.'));
       }
+      // Debug: log token claims to identify Tawi-Tawi JWT structure
+      console.log('[RS256 Token Claims]', JSON.stringify(decoded));
       // Normalize: Tawi-Tawi uses 'id' claim; HanapGawa routes expect 'sub'
       if (!decoded.sub && decoded.id) decoded.sub = decoded.id;
+      if (!decoded.sub && decoded.userId) decoded.sub = decoded.userId;
       req.auth = decoded;
       return next();
     });
