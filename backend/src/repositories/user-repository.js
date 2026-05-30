@@ -35,6 +35,21 @@ async function ensureAuthSchema(pool) {
   authSchemaReady = true;
 }
 
+async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
+  const pool = requirePostgres();
+  await ensureAuthSchema(pool);
+  const result = await pool.query(
+    `
+      INSERT INTO users (id, email, password_hash, role, full_name, email_verified_at)
+      VALUES ($1, $2, '', $3, $4, NOW())
+      ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, updated_at = NOW()
+      RETURNING id, email, role, full_name AS "fullName", status
+    `,
+    [id, email, role, fullName],
+  );
+  return result.rows[0];
+}
+
 async function createUser({ email, passwordHash, role, fullName, emailVerifiedAt = null }) {
   const pool = requirePostgres();
   await ensureAuthSchema(pool);
@@ -248,6 +263,7 @@ async function markEmailVerified(userId, codeId) {
 
 module.exports = {
   createUser,
+  upsertSsoUser,
   createEmailVerificationCode,
   findUserByEmail,
   findUserById,

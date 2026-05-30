@@ -13,7 +13,7 @@ const {
   verifyEmail,
   verifyExternalToken,
 } = require('../services/auth-service');
-const { createUser, findUserByEmail } = require('../repositories/user-repository');
+const { createUser, findUserByEmail, upsertSsoUser } = require('../repositories/user-repository');
 const { getPostgresPool } = require('../db/postgres');
 
 const router = express.Router();
@@ -180,5 +180,23 @@ router.post(
     res.status(201).json({ user, token });
   }),
 );
+
+// SSO init: called by Tawi-Tawi frontend to provision the user in HanapGawa
+// Verifies the RS256 token then upserts the user using their Tawi-Tawi UUID
+router.post('/sso-init', authenticate, asyncHandler(async (req, res) => {
+  const { email, fullName } = req.body;
+
+  if (!email || !fullName) {
+    throw new HttpError(400, 'email and fullName are required.');
+  }
+
+  const userId = req.auth.sub;
+  if (!userId) {
+    throw new HttpError(401, 'Could not resolve user identity from token.');
+  }
+
+  const user = await upsertSsoUser({ id: userId, email, fullName });
+  res.json({ success: true, user });
+}));
 
 module.exports = { authRoutes: router };
