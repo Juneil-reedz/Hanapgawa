@@ -21,8 +21,13 @@ function isAllowedOrigin(origin) {
     return true;
   }
 
+  // Allow localhost on any port for local development
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return true;
+  }
+
   if (env.nodeEnv !== 'production') {
-    return /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+):8100$/.test(origin);
+    return /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin);
   }
 
   return false;
