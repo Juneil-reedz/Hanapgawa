@@ -55,7 +55,6 @@ async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
 }
 
 async function findUserByTawiTawiId(tawiTawiId) {
-  await ensureAuthSchema(requirePostgres());
   const pool = requirePostgresRead();
   const result = await pool.query(
     `SELECT id, email, role, full_name AS "fullName", status FROM users WHERE tawi_tawi_id = $1 OR id::text = $2 LIMIT 1`,
@@ -276,6 +275,7 @@ async function markEmailVerified(userId, codeId) {
 }
 
 module.exports = {
+  ensureAuthSchema,
   createUser,
   upsertSsoUser,
   findUserByTawiTawiId,

@@ -7,8 +7,22 @@ const { env } = require('./config/env');
 const { errorHandler } = require('./middleware/error-handler');
 const { initFirebase } = require('./lib/firebase');
 const { apiRoutes } = require('./routes');
+const { getPostgresPool } = require('./db/postgres');
 
 initFirebase();
+
+// Run schema migrations once on startup (non-blocking)
+setTimeout(async () => {
+  try {
+    const pool = getPostgresPool();
+    if (pool) {
+      const { ensureAuthSchema } = require('./repositories/user-repository');
+      await ensureAuthSchema(pool);
+    }
+  } catch (e) {
+    console.error('[Startup] Schema migration failed:', e.message);
+  }
+}, 2000);
 
 const app = express();
 
