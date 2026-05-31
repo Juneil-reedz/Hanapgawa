@@ -45,7 +45,7 @@ async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
       INSERT INTO users (id, email, password_hash, role, full_name, email_verified_at, tawi_tawi_id)
       VALUES ($1::uuid, $2, '', $3, $4, NOW(), $5)
       ON CONFLICT (email) DO UPDATE
-        SET tawi_tawi_id = EXCLUDED.tawi_tawi_id,
+        SET tawi_tawi_id = COALESCE(users.tawi_tawi_id, EXCLUDED.tawi_tawi_id),
             updated_at = NOW()
       RETURNING id, email, role, full_name AS "fullName", status
     `,
