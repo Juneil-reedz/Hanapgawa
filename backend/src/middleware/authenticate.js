@@ -45,7 +45,7 @@ function authenticate(req, _res, next) {
 
   // ROUTE 1: Tawi-Tawi Gateway Token (Super App SSO)
   if (algorithm === 'RS256') {
-    jwt.verify(token, getKey, { algorithms: ['RS256'] }, (err, decoded) => {
+    jwt.verify(token, getKey, { algorithms: ['RS256'] }, async (err, decoded) => {
       if (err) {
         return next(new HttpError(401, 'Super App token expired or invalid.'));
       }
@@ -53,12 +53,16 @@ function authenticate(req, _res, next) {
       const tawiTawiId = decoded.sub || decoded.userId || decoded.id;
       if (!tawiTawiId) return next(new HttpError(401, 'Cannot resolve user identity from token.'));
 
-      // Resolve the real HanapGawa user ID (handles existing accounts linked via tawi_tawi_id)
-      const user = await findUserByTawiTawiId(tawiTawiId);
-      decoded.sub = user ? user.id : tawiTawiId;
-      if (user) decoded.role = user.role;
-      req.auth = decoded;
-      return next();
+      try {
+        // Resolve the real HanapGawa user ID (handles existing accounts linked via tawi_tawi_id)
+        const user = await findUserByTawiTawiId(tawiTawiId);
+        decoded.sub = user ? user.id : tawiTawiId;
+        if (user) decoded.role = user.role;
+        req.auth = decoded;
+        return next();
+      } catch (dbErr) {
+        return next(dbErr);
+      }
     });
   } 
   // ROUTE 2: Native HanapGawa Token (Standalone App)
