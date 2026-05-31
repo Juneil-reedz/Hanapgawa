@@ -618,4 +618,36 @@ router.get(
   }),
 );
 
+// GET /users/:userId/avatar — lightweight profile pic fetch (used by feed cards)
+router.get(
+  '/:userId/avatar',
+  asyncHandler(async (req, res) => {
+    const pool = require('../db/postgres').getPostgresReadPool();
+    if (!pool) return res.json({ pic: null });
+    const result = await pool.query(
+      `SELECT profile_pic AS pic FROM user_profiles WHERE user_id = $1`,
+      [req.params.userId],
+    );
+    res.json({ pic: result.rows[0]?.pic ?? null });
+  }),
+);
+
+// POST /users/avatars — batch profile pic fetch for multiple user IDs
+router.post(
+  '/avatars',
+  asyncHandler(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 50) : [];
+    if (!ids.length) return res.json({ pics: {} });
+    const pool = require('../db/postgres').getPostgresReadPool();
+    if (!pool) return res.json({ pics: {} });
+    const result = await pool.query(
+      `SELECT user_id AS "userId", profile_pic AS pic FROM user_profiles WHERE user_id = ANY($1)`,
+      [ids],
+    );
+    const pics = {};
+    for (const row of result.rows) pics[row.userId] = row.pic ?? null;
+    res.json({ pics });
+  }),
+);
+
 module.exports = { userRoutes: router };
