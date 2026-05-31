@@ -199,4 +199,21 @@ router.post('/sso-init', authenticate, asyncHandler(async (req, res) => {
   res.json({ success: true, user });
 }));
 
+// Update the authenticated user's display name
+router.patch('/me/name', authenticate, asyncHandler(async (req, res) => {
+  const { fullName } = req.body;
+  if (!fullName || typeof fullName !== 'string' || fullName.trim().length < 2) {
+    throw new HttpError(400, 'fullName must be at least 2 characters.');
+  }
+  const pool = require('../db/postgres').getPostgresPool();
+  if (!pool) throw new HttpError(503, 'Database not available.');
+  const result = await pool.query(
+    `UPDATE users SET full_name = $1, updated_at = NOW() WHERE id = $2
+     RETURNING id, email, role, full_name AS "fullName", status`,
+    [fullName.trim(), req.auth.sub],
+  );
+  if (!result.rows[0]) throw new HttpError(404, 'User not found.');
+  res.json({ user: result.rows[0] });
+}));
+
 module.exports = { authRoutes: router };
