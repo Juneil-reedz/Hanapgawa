@@ -59,8 +59,8 @@ async function findUserByTawiTawiId(tawiTawiId) {
   await ensureAuthSchema(requirePostgres());
   const pool = requirePostgresRead();
   const result = await pool.query(
-    `SELECT id, email, role, full_name AS "fullName", status FROM users WHERE tawi_tawi_id = $1 OR id::text = $1 LIMIT 1`,
-    [tawiTawiId],
+    `SELECT id, email, role, full_name AS "fullName", status FROM users WHERE tawi_tawi_id = $1 OR id::text = $2 LIMIT 1`,
+    [tawiTawiId, tawiTawiId],
   );
   return result.rows[0] || null;
 }
