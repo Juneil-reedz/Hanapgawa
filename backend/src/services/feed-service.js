@@ -185,7 +185,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
       if (followedIds.length > 0) {
         socialQuery = `
           SELECT sp.id, sp.user_id AS "userId", sp.full_name AS "fullName",
-                 COALESCE(up.profile_pic, sp.profile_pic) AS "profilePic",
+                 NULL AS "profilePic",
                  sp.body, sp.image, sp.video, sp.metadata, sp.privacy,
                  sp.scheduled_at AS "scheduledAt",
                  sp.shared_from_type AS "sharedFromType",
@@ -193,7 +193,6 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                  sp.shared_snapshot AS "sharedSnapshot",
                  sp.created_at AS "createdAt"
           FROM social_posts sp
-          LEFT JOIN user_profiles up ON up.user_id = sp.user_id
           WHERE (sp.user_id = ANY($2) OR sp.user_id = $3)
             AND (sp.scheduled_at IS NULL OR sp.scheduled_at <= NOW())
           ORDER BY sp.created_at DESC
@@ -204,7 +203,7 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
         // No follows yet — show recent posts from all users so new users see content
         socialQuery = `
           SELECT sp.id, sp.user_id AS "userId", sp.full_name AS "fullName",
-                 COALESCE(up.profile_pic, sp.profile_pic) AS "profilePic",
+                 NULL AS "profilePic",
                  sp.body, sp.image, sp.video, sp.metadata, sp.privacy,
                  sp.scheduled_at AS "scheduledAt",
                  sp.shared_from_type AS "sharedFromType",
@@ -212,7 +211,6 @@ async function getPublicFeed({ limit = 40, userId = null } = {}) {
                  sp.shared_snapshot AS "sharedSnapshot",
                  sp.created_at AS "createdAt"
           FROM social_posts sp
-          LEFT JOIN user_profiles up ON up.user_id = sp.user_id
           WHERE (sp.scheduled_at IS NULL OR sp.scheduled_at <= NOW())
           ORDER BY sp.created_at DESC
           LIMIT $1
