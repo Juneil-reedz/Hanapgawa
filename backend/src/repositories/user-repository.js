@@ -38,11 +38,16 @@ async function ensureAuthSchema(pool) {
 async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
   const pool = requirePostgres();
   await ensureAuthSchema(pool);
+  // If the email already exists with a different id, update that row's id to match
+  // the Tawi-Tawi userId so tokens resolve correctly.
   const result = await pool.query(
     `
       INSERT INTO users (id, email, password_hash, role, full_name, email_verified_at)
       VALUES ($1, $2, '', $3, $4, NOW())
-      ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, updated_at = NOW()
+      ON CONFLICT (email) DO UPDATE
+        SET id = EXCLUDED.id,
+            full_name = EXCLUDED.full_name,
+            updated_at = NOW()
       RETURNING id, email, role, full_name AS "fullName", status
     `,
     [id, email, role, fullName],
