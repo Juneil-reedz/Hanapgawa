@@ -46,7 +46,6 @@ async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
       VALUES ($1::uuid, $2, '', $3, $4, NOW(), $5)
       ON CONFLICT (email) DO UPDATE
         SET tawi_tawi_id = EXCLUDED.tawi_tawi_id,
-            full_name = EXCLUDED.full_name,
             updated_at = NOW()
       RETURNING id, email, role, full_name AS "fullName", status
     `,
