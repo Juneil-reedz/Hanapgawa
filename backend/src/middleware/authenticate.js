@@ -3,6 +3,7 @@ const jwksClient = require('jwks-rsa');
 
 const { env } = require('../config/env');
 const { HttpError } = require('../lib/http-error');
+const { findUserByTawiTawiId } = require('../repositories/user-repository');
 
 // Configure the JWKS client to fetch the public key from the Tawi-Tawi Gateway
 const client = jwksClient({
@@ -48,11 +49,14 @@ function authenticate(req, _res, next) {
       if (err) {
         return next(new HttpError(401, 'Super App token expired or invalid.'));
       }
-      // Debug: log token claims to identify Tawi-Tawi JWT structure
-      console.log('[RS256 Token Claims]', JSON.stringify(decoded));
-      // Normalize: Tawi-Tawi uses 'id' claim; HanapGawa routes expect 'sub'
-      if (!decoded.sub && decoded.id) decoded.sub = decoded.id;
-      if (!decoded.sub && decoded.userId) decoded.sub = decoded.userId;
+      // Normalize: Tawi-Tawi uses 'userId' claim; HanapGawa routes expect 'sub'
+      const tawiTawiId = decoded.sub || decoded.userId || decoded.id;
+      if (!tawiTawiId) return next(new HttpError(401, 'Cannot resolve user identity from token.'));
+
+      // Resolve the real HanapGawa user ID (handles existing accounts linked via tawi_tawi_id)
+      const user = await findUserByTawiTawiId(tawiTawiId);
+      decoded.sub = user ? user.id : tawiTawiId;
+      if (user) decoded.role = user.role;
       req.auth = decoded;
       return next();
     });

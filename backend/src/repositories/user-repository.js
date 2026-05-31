@@ -21,6 +21,7 @@ async function ensureAuthSchema(pool) {
   }
 
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS tawi_tawi_id TEXT UNIQUE');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS email_verification_codes (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,14 +39,13 @@ async function ensureAuthSchema(pool) {
 async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
   const pool = requirePostgres();
   await ensureAuthSchema(pool);
-  // If the email already exists with a different id, update that row's id to match
-  // the Tawi-Tawi userId so tokens resolve correctly.
+  // Insert new user with Tawi-Tawi UUID as PK, or link existing account via tawi_tawi_id
   const result = await pool.query(
     `
-      INSERT INTO users (id, email, password_hash, role, full_name, email_verified_at)
-      VALUES ($1, $2, '', $3, $4, NOW())
+      INSERT INTO users (id, email, password_hash, role, full_name, email_verified_at, tawi_tawi_id)
+      VALUES ($1, $2, '', $3, $4, NOW(), $1)
       ON CONFLICT (email) DO UPDATE
-        SET id = EXCLUDED.id,
+        SET tawi_tawi_id = EXCLUDED.id,
             full_name = EXCLUDED.full_name,
             updated_at = NOW()
       RETURNING id, email, role, full_name AS "fullName", status
@@ -53,6 +53,15 @@ async function upsertSsoUser({ id, email, fullName, role = 'client' }) {
     [id, email, role, fullName],
   );
   return result.rows[0];
+}
+
+async function findUserByTawiTawiId(tawiTawiId) {
+  const pool = requirePostgresRead();
+  const result = await pool.query(
+    `SELECT id, email, role, full_name AS "fullName", status FROM users WHERE tawi_tawi_id = $1 OR id = $1 LIMIT 1`,
+    [tawiTawiId],
+  );
+  return result.rows[0] || null;
 }
 
 async function createUser({ email, passwordHash, role, fullName, emailVerifiedAt = null }) {
@@ -269,6 +278,7 @@ async function markEmailVerified(userId, codeId) {
 module.exports = {
   createUser,
   upsertSsoUser,
+  findUserByTawiTawiId,
   createEmailVerificationCode,
   findUserByEmail,
   findUserById,
