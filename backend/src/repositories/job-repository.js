@@ -44,7 +44,10 @@ const jobSelect = `
   provider.full_name AS "assignedProviderFullName",
   jp.scheduled_at AS "scheduledAt",
   jp.created_at AS "createdAt",
-  jp.updated_at AS "updatedAt"
+  jp.updated_at AS "updatedAt",
+  jp.is_disabled AS "isDisabled",
+  jp.reposted_job_id AS "repostedJobId",
+  EXISTS(SELECT 1 FROM job_posts rp WHERE rp.reposted_job_id = jp.id) AS "hasBeenReposted"
 `;
 
 const offerSelect = `
@@ -172,7 +175,9 @@ async function listJobPosts({ userId, role, status }) {
     conditions.push(`jp.status = $${values.length}`);
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  // Hide disabled posts from non-owners (owners still see their own disabled posts)
+  conditions.push(`(jp.is_disabled = FALSE OR jp.client_user_id = $1)`);
+  const where = `WHERE ${conditions.join(' AND ')}`;
   const result = await pool.query(
     `
       SELECT ${jobSelect}
