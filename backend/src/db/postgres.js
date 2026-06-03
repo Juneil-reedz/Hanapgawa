@@ -354,8 +354,6 @@ async function ensurePostgresSchema() {
 
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS job_post_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reposted_job_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
-  await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE`);
-  await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS reposted_job_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
 
   await client.query(`ALTER TABLE reports ADD COLUMN IF NOT EXISTS content_type TEXT`);
   await client.query(`ALTER TABLE reports ADD COLUMN IF NOT EXISTS content_id TEXT`);
