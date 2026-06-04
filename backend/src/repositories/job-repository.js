@@ -26,13 +26,24 @@ const jobSelect = `
   jp.budget_min AS "budgetMin",
   jp.budget_max AS "budgetMax",
   jp.workers_needed AS "workersNeeded",
-  (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id AND offers.status = 'accepted') AS "acceptedOfferCount",
+  (
+    (SELECT COUNT(*)::int FROM job_offers offers WHERE offers.job_post_id = jp.id AND offers.status = 'accepted')
+    + (SELECT COUNT(*)::int FROM bookings b WHERE b.job_post_id = jp.id AND b.source = 'direct_booking' AND b.status NOT IN ('cancelled'))
+  ) AS "acceptedOfferCount",
   CASE
     WHEN jp.client_user_id = $1 OR $2 = 'admin' THEN COALESCE((
-      SELECT json_agg(json_build_object('id', u.id, 'name', u.full_name) ORDER BY offers.updated_at)
-      FROM job_offers offers
-      JOIN users u ON u.id = offers.provider_user_id
-      WHERE offers.job_post_id = jp.id AND offers.status = 'accepted'
+      SELECT json_agg(json_build_object('id', t.id, 'name', t.full_name) ORDER BY t.created_at)
+      FROM (
+        SELECT offers.updated_at AS created_at, u2.id, u2.full_name
+        FROM job_offers offers
+        JOIN users u2 ON u2.id = offers.provider_user_id
+        WHERE offers.job_post_id = jp.id AND offers.status = 'accepted'
+        UNION ALL
+        SELECT b.created_at, u2.id, u2.full_name
+        FROM bookings b
+        JOIN users u2 ON u2.id = b.client_user_id
+        WHERE b.job_post_id = jp.id AND b.source = 'direct_booking' AND b.status NOT IN ('cancelled')
+      ) t
     ), '[]'::json)
     ELSE '[]'::json
   END AS "acceptedWorkers",
