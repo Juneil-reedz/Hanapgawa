@@ -227,6 +227,78 @@ router.patch(
 );
 
 router.patch(
+  '/:jobPostId/toggle',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const jobPostId = z.uuid().safeParse(req.params.jobPostId);
+    if (!jobPostId.success) throw new HttpError(400, 'Invalid job post id.');
+
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+
+    const ownerCheck = await pool.query(
+      `SELECT id, client_user_id, status, is_disabled FROM job_posts WHERE id = $1`,
+      [jobPostId.data],
+    );
+    if (!ownerCheck.rows.length) throw new HttpError(404, 'Job post not found.');
+    const job = ownerCheck.rows[0];
+    if (job.client_user_id !== req.auth.sub) throw new HttpError(403, 'Only the job owner can toggle this post.');
+    if (job.status !== 'open') throw new HttpError(400, 'Only open posts can be toggled.');
+
+    const newDisabled = !job.is_disabled;
+    await pool.query(
+      `UPDATE job_posts SET is_disabled = $2, updated_at = NOW() WHERE id = $1`,
+      [jobPostId.data, newDisabled],
+    );
+
+    res.json({ isDisabled: newDisabled });
+  }),
+);
+
+router.post(
+  '/:jobPostId/repost',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const jobPostId = z.uuid().safeParse(req.params.jobPostId);
+    if (!jobPostId.success) throw new HttpError(400, 'Invalid job post id.');
+
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+
+    const ownerCheck = await pool.query(
+      `SELECT * FROM job_posts WHERE id = $1`,
+      [jobPostId.data],
+    );
+    if (!ownerCheck.rows.length) throw new HttpError(404, 'Job post not found.');
+    const original = ownerCheck.rows[0];
+    if (original.client_user_id !== req.auth.sub) throw new HttpError(403, 'Only the job owner can repost.');
+    if (original.has_been_reposted) throw new HttpError(409, 'This job post has already been reposted once.');
+    if (original.status === 'open') throw new HttpError(400, 'Cannot repost an open job post. Close it first.');
+
+    const inserted = await pool.query(
+      `INSERT INTO job_posts
+        (client_user_id, post_type, title, category, municipality, location_details, description,
+         budget_min, budget_max, workers_needed, scheduled_at, allow_direct_booking)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, status`,
+      [
+        original.client_user_id, original.post_type, original.title, original.category,
+        original.municipality, original.location_details, original.description,
+        original.budget_min, original.budget_max, original.workers_needed,
+        original.scheduled_at, original.allow_direct_booking,
+      ],
+    );
+
+    await pool.query(
+      `UPDATE job_posts SET has_been_reposted = TRUE, updated_at = NOW() WHERE id = $1`,
+      [jobPostId.data],
+    );
+
+    res.status(201).json({ jobPost: inserted.rows[0] });
+  }),
+);
+
+router.patch(
   '/:jobPostId/reopen',
   authenticate,
   asyncHandler(async (req, res) => {

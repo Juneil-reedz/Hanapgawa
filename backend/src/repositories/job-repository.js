@@ -43,6 +43,8 @@ const jobSelect = `
   jp.assigned_provider_user_id AS "assignedProviderUserId",
   provider.full_name AS "assignedProviderFullName",
   jp.scheduled_at AS "scheduledAt",
+  jp.is_disabled AS "isDisabled",
+  jp.has_been_reposted AS "hasBeenReposted",
   jp.created_at AS "createdAt",
   jp.updated_at AS "updatedAt"
 `;

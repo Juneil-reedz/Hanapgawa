@@ -352,6 +352,9 @@ async function ensurePostgresSchema() {
     ADD CONSTRAINT job_posts_post_type_check CHECK (post_type IN ('looking_for_worker', 'offering_service'))
   `);
 
+  await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE`);
+  await client.query(`ALTER TABLE job_posts ADD COLUMN IF NOT EXISTS has_been_reposted BOOLEAN NOT NULL DEFAULT FALSE`);
+
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS job_post_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
   await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reposted_job_id UUID REFERENCES job_posts(id) ON DELETE SET NULL`);
 
