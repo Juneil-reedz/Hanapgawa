@@ -80,7 +80,7 @@ ThemeData buildTheme() => ThemeData(
           borderSide: const BorderSide(color: appPrimary, width: 1.4),
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: Colors.white,
         elevation: 0,
         margin: EdgeInsets.zero,
