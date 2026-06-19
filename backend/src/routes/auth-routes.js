@@ -180,6 +180,35 @@ router.post(
   }),
 );
 
+// ONE-SHOT admin email update — verifies current admin email then renames it.
+// Remove this endpoint after use.
+router.post(
+  '/update-admin-email',
+  asyncHandler(async (req, res) => {
+    const pool = getPostgresPool();
+    if (!pool) throw new HttpError(503, 'Database unavailable.');
+
+    const body = z.object({
+      currentEmail: z.email(),
+      newEmail: z.email(),
+    }).safeParse(req.body);
+    if (!body.success) throw new HttpError(400, 'currentEmail and newEmail are required.');
+
+    const admin = await findUserByEmail(body.data.currentEmail);
+    if (!admin || admin.role !== 'admin') throw new HttpError(404, 'No admin found with that email.');
+
+    const conflict = await findUserByEmail(body.data.newEmail);
+    if (conflict) throw new HttpError(409, 'New email is already in use.');
+
+    const result = await pool.query(
+      `UPDATE users SET email = $1, updated_at = NOW() WHERE email = $2 AND role = 'admin'
+       RETURNING id, email, role, full_name AS "fullName"`,
+      [body.data.newEmail, body.data.currentEmail],
+    );
+    res.json({ success: true, user: result.rows[0] });
+  }),
+);
+
 // SSO init: called by Tawi-Tawi frontend (via proxy) to provision the user in HanapGawa.
 // Gateway requests include X-Internal-Gateway-Secret; the proxy already authenticated the
 // Kawman token so we decode without re-verifying. Native standalone calls verify normally.
