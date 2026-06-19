@@ -25,7 +25,7 @@ function getKey(header, callback) {
   });
 }
 
-function authenticate(req, _res, next) {
+async function authenticate(req, _res, next) {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
