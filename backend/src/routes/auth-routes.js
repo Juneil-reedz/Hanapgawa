@@ -15,7 +15,7 @@ const {
   verifyEmail,
   verifyExternalToken,
 } = require('../services/auth-service');
-const { createUser, findUserByEmail, upsertSsoUser, findUserById } = require('../repositories/user-repository');
+const { createUser, findUserByEmail, upsertSsoUser } = require('../repositories/user-repository');
 const { getPostgresPool } = require('../db/postgres');
 
 const router = express.Router();
@@ -119,12 +119,7 @@ router.get(
   '/me',
   authenticate,
   asyncHandler(async (req, res) => {
-    const user = await findUserById(req.auth.sub);
-    if (user) {
-      res.json({ user: { id: user.id, email: user.email, role: user.role, fullName: user.fullName, status: user.status } });
-    } else {
-      res.json({ user: req.auth });
-    }
+    res.json({ user: req.auth });
   }),
 );
 
