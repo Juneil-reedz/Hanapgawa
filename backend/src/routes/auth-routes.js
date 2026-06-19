@@ -180,19 +180,37 @@ router.post(
   }),
 );
 
-// SSO init: called by Tawi-Tawi frontend to provision the user in HanapGawa
-// Verifies the RS256 token then upserts the user using their Tawi-Tawi UUID
-router.post('/sso-init', authenticate, asyncHandler(async (req, res) => {
+// SSO init: called by Tawi-Tawi frontend (via proxy) to provision the user in HanapGawa.
+// Gateway requests include X-Internal-Gateway-Secret; the proxy already authenticated the
+// Kawman token so we decode without re-verifying. Native standalone calls verify normally.
+router.post('/sso-init', asyncHandler(async (req, res) => {
   const { email, fullName } = req.body;
 
   if (!email || !fullName) {
     throw new HttpError(400, 'email and fullName are required.');
   }
 
-  const userId = req.auth.sub;
-  if (!userId) {
-    throw new HttpError(401, 'Could not resolve user identity from token.');
+  const authHeader = req.headers.authorization || '';
+  const rawToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!rawToken) throw new HttpError(401, 'Missing bearer token.');
+
+  const gatewaySecret = req.headers['x-internal-gateway-secret'] || '';
+  const fromGateway = env.gatewayInternalSecret && gatewaySecret === env.gatewayInternalSecret;
+
+  let userId;
+  if (fromGateway) {
+    const decoded = jwt.decode(rawToken);
+    userId = decoded?.sub || decoded?.userId || decoded?.id;
+  } else {
+    try {
+      const decoded = jwt.verify(rawToken, env.jwtSecret);
+      userId = decoded.sub;
+    } catch {
+      throw new HttpError(401, 'Invalid or expired token.');
+    }
   }
+
+  if (!userId) throw new HttpError(401, 'Could not resolve user identity from token.');
 
   const user = await upsertSsoUser({ id: userId, email, fullName });
   res.json({ success: true, user });
