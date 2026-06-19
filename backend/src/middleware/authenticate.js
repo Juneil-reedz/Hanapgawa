@@ -3,7 +3,7 @@ const jwksClient = require('jwks-rsa');
 
 const { env } = require('../config/env');
 const { HttpError } = require('../lib/http-error');
-const { findUserByTawiTawiId, findUserById } = require('../repositories/user-repository');
+const { findUserByTawiTawiId } = require('../repositories/user-repository');
 
 // Configure the JWKS client to fetch the public key from the Tawi-Tawi Gateway
 const client = jwksClient({
@@ -78,10 +78,6 @@ async function authenticate(req, _res, next) {
     } catch {
       return next(new HttpError(401, 'Native token expired or invalid.'));
     }
-    try {
-      const user = await findUserById(decoded.sub);
-      if (user) decoded.role = user.role;
-    } catch { /* ignore — fall back to token's own role claim */ }
     req.auth = decoded;
     return next();
   }
