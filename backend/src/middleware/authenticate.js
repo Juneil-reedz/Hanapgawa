@@ -3,7 +3,7 @@ const jwksClient = require('jwks-rsa');
 
 const { env } = require('../config/env');
 const { HttpError } = require('../lib/http-error');
-const { findUserByTawiTawiId } = require('../repositories/user-repository');
+const { findUserByTawiTawiId, findUserById } = require('../repositories/user-repository');
 
 // Configure the JWKS client to fetch the public key from the Tawi-Tawi Gateway
 const client = jwksClient({
@@ -68,15 +68,23 @@ function authenticate(req, _res, next) {
       }
     });
   } 
-  // ROUTE 2: Native HanapGawa Token (Standalone App)
+  // ROUTE 2: HS256 token — either native HanapGawa (standalone app) or gateway-translated
+  // (Tawi-Tawi proxy mints HS256 tokens but carries the Kawman role, not the HanapGawa role).
+  // Always look up the real role from DB so admin access works through the gateway.
   else if (algorithm === 'HS256') {
+    let decoded;
     try {
-      req.auth = jwt.verify(token, env.jwtSecret);
-      return next();
+      decoded = jwt.verify(token, env.jwtSecret);
     } catch {
       return next(new HttpError(401, 'Native token expired or invalid.'));
     }
-  } 
+    try {
+      const user = await findUserById(decoded.sub);
+      if (user) decoded.role = user.role;
+    } catch { /* ignore — fall back to token's own role claim */ }
+    req.auth = decoded;
+    return next();
+  }
   // ROUTE 3: Unknown Token Type
   else {
     return next(new HttpError(401, 'Unsupported authentication method.'));
