@@ -1623,99 +1623,95 @@ class _FeedbackSectionState extends State<_FeedbackSection> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: Column(
-        children: [
-          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      AppCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(children: [
-                              const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 28),
-                              const SizedBox(width: 8),
-                              Text(_average.toStringAsFixed(1),
-                                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
-                              const SizedBox(width: 8),
-                              Text('/ 5.0  ·  $_total ratings',
-                                  style: const TextStyle(color: Colors.black54)),
-                            ]),
-                            const SizedBox(height: 12),
-                            ...[5, 4, 3, 2, 1].map((star) {
-                              final entry = _distribution.firstWhere(
-                                  (d) => d['star'] == star,
-                                  orElse: () => {'star': star, 'count': 0});
-                              final count = entry['count'] as int? ?? 0;
-                              final pct = _total > 0 ? count / _total : 0.0;
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 2),
-                                child: Row(children: [
-                                  Text('$star', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                                  const SizedBox(width: 4),
-                                  const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFC107)),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: pct, minHeight: 8,
-                                        backgroundColor: Colors.grey.shade200,
-                                        color: appPrimary,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  SizedBox(width: 28,
-                                      child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.black54))),
-                                ]),
-                              );
-                            }),
-                          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else ...[
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 28),
+                  const SizedBox(width: 8),
+                  Text(_average.toStringAsFixed(1),
+                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+                  const SizedBox(width: 8),
+                  Text('/ 5.0  ·  $_total ratings',
+                      style: const TextStyle(color: Colors.black54)),
+                ]),
+                const SizedBox(height: 12),
+                ...[5, 4, 3, 2, 1].map((star) {
+                  final entry = _distribution.firstWhere(
+                      (d) => d['star'] == star,
+                      orElse: () => {'star': star, 'count': 0});
+                  final count = entry['count'] as int? ?? 0;
+                  final pct = _total > 0 ? count / _total : 0.0;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Text('$star', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFC107)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: pct, minHeight: 8,
+                            backgroundColor: Colors.grey.shade200,
+                            color: appPrimary,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      if (_feedback.isEmpty)
-                        const EmptyState(icon: Icons.star_outline, title: 'No feedback yet',
-                            subtitle: 'User feedback will appear here.')
-                      else
-                        ..._feedback.map((f) {
-                          final rating = f['rating'] as int? ?? 0;
-                          final comment = f['comment']?.toString() ?? '';
-                          final createdAt = parseDate(f['createdAt']);
-                          return AppCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(children: [
-                                  Row(children: List.generate(5, (i) => Icon(
-                                    i < rating ? Icons.star_rounded : Icons.star_outline_rounded,
-                                    size: 18,
-                                    color: i < rating ? const Color(0xFFFFC107) : Colors.grey.shade400,
-                                  ))),
-                                  const Spacer(),
-                                  Text(timeAgo(createdAt),
-                                      style: const TextStyle(color: Colors.black45, fontSize: 12)),
-                                ]),
-                                if (comment.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(comment, style: const TextStyle(fontSize: 14)),
-                                ],
-                              ],
-                            ),
-                          );
-                        }),
-                    ],
-                  ),
+                      const SizedBox(width: 8),
+                      SizedBox(width: 28,
+                          child: Text('$count', style: const TextStyle(fontSize: 12, color: Colors.black54))),
+                    ]),
+                  );
+                }),
+              ],
+            ),
           ),
+          const SizedBox(height: 12),
+          if (_feedback.isEmpty)
+            const EmptyState(icon: Icons.star_outline, title: 'No feedback yet',
+                subtitle: 'User feedback will appear here.')
+          else
+            ..._feedback.map((f) {
+              final rating = f['rating'] as int? ?? 0;
+              final comment = f['comment']?.toString() ?? '';
+              final createdAt = parseDate(f['createdAt']);
+              return AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Row(children: List.generate(5, (i) => Icon(
+                        i < rating ? Icons.star_rounded : Icons.star_outline_rounded,
+                        size: 18,
+                        color: i < rating ? const Color(0xFFFFC107) : Colors.grey.shade400,
+                      ))),
+                      const Spacer(),
+                      Text(timeAgo(createdAt),
+                          style: const TextStyle(color: Colors.black45, fontSize: 12)),
+                    ]),
+                    if (comment.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(comment, style: const TextStyle(fontSize: 14)),
+                    ],
+                  ],
+                ),
+              );
+            }),
         ],
-      ),
+      ],
     );
   }
 }
