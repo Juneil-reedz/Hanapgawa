@@ -26,6 +26,7 @@ setTimeout(async () => {
 }, 2000);
 
 const app = express();
+app.set('trust proxy', 1);
 
 function isAllowedOrigin(origin) {
   if (!origin) {
