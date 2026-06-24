@@ -229,15 +229,12 @@ router.post('/sso-init', asyncHandler(async (req, res) => {
   let userId;
   if (fromGateway) {
     const decoded = jwt.decode(rawToken);
-    console.log('[SSO-INIT DEBUG] fromGateway=true decoded:', JSON.stringify(decoded));
     userId = decoded?.sub || decoded?.userId || decoded?.id;
   } else {
     try {
       const decoded = jwt.verify(rawToken, env.jwtSecret);
-      console.log('[SSO-INIT DEBUG] fromGateway=false decoded:', JSON.stringify(decoded));
-      userId = decoded.sub;
-    } catch (e) {
-      console.log('[SSO-INIT DEBUG] fromGateway=false verify failed:', e.message, 'gatewaySecretSet:', !!env.gatewayInternalSecret);
+      userId = decoded.sub || decoded.userId || decoded.id;
+    } catch {
       throw new HttpError(401, 'Invalid or expired token.');
     }
   }
