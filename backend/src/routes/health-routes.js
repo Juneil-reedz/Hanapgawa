@@ -17,9 +17,9 @@ router.get(
   '/',
   asyncHandler(async (_req, res) => {
     const [postgres, mongo, redis] = await Promise.allSettled([
-      withTimeout(checkPostgresHealth(), 5000),
-      withTimeout(checkMongoHealth(), 5000),
-      withTimeout(checkRedisHealth(), 5000),
+      withTimeout(checkPostgresHealth(), 2000),
+      withTimeout(checkMongoHealth(), 2000),
+      withTimeout(checkRedisHealth(), 2000),
     ]);
 
     res.json({
