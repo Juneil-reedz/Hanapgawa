@@ -1,5 +1,6 @@
 const cors = require('cors');
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const helmet = require('helmet');
 const morgan = require('morgan');
 
@@ -47,6 +48,24 @@ function isAllowedOrigin(origin) {
   return false;
 }
 
+// General rate limit: effectively unlimited — all users share the same proxy IP (tawi-tawi-backend)
+const generalLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 1000000000,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: { message: 'Too many requests, please slow down.' } },
+});
+
+// Auth rate limit: high because all users share the same proxy IP (tawi-tawi-backend)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10000,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: { message: 'Too many login attempts, please try again later.' } },
+});
+
 app.use(helmet());
 app.use(
   cors({
@@ -67,7 +86,10 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.use(env.apiPrefix, apiRoutes);
+// Strict limit only on login/register — not ssoInit (all users share proxy IP)
+app.use(`${env.apiPrefix}/auth/login`, authLimiter);
+app.use(`${env.apiPrefix}/auth/register`, authLimiter);
+app.use(env.apiPrefix, generalLimiter, apiRoutes);
 app.use(errorHandler);
 
 module.exports = { app };

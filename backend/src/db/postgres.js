@@ -592,7 +592,7 @@ async function checkPostgresHealth() {
     return { configured: false, healthy: false };
   }
 
-  await client.query('SELECT 1');
+  await client.query({ text: 'SELECT 1', query_timeout: 4000 });
   return { configured: true, healthy: true };
 }
 
