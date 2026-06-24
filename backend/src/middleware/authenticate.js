@@ -43,8 +43,6 @@ async function authenticate(req, _res, next) {
 
   const algorithm = decodedUnverified.header.alg;
 
-  // Temporary debug log — remove after diagnosing the 401 issue
-  console.log(`[AUTH DEBUG] alg=${algorithm} kid=${decodedUnverified.header.kid} path=${req.path} token_prefix=${token.slice(0, 30)}`);
 
   // ROUTE 1: Tawi-Tawi Gateway Token (Super App SSO)
   if (algorithm === 'RS256') {
