@@ -21,6 +21,7 @@ const { notificationRoutes } = require('./notification-routes');
 const { socialPostRoutes } = require('./social-post-routes');
 const { storyRoutes } = require('./story-routes');
 const { userRoutes } = require('./user-routes');
+const { sseRoutes } = require('./sse-routes');
 
 const router = express.Router();
 
@@ -45,5 +46,6 @@ router.use('/reports', reportRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/services', serviceRoutes);
 router.use('/users', userRoutes);
+router.use('/events', sseRoutes);
 
 module.exports = { apiRoutes: router };
