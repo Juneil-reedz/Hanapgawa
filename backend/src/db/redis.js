@@ -15,7 +15,7 @@ async function getRedisClient() {
       url: env.redisUrl,
       socket: { tls: env.redisUrl.startsWith('rediss://'), rejectUnauthorized: false },
     });
-    client.on('error', () => {});
+    client.on('error', (err) => console.warn('[Redis error]', err.message));
   }
 
   if (!client.isOpen) {
