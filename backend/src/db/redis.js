@@ -11,7 +11,10 @@ async function getRedisClient() {
   }
 
   if (!client) {
-    client = createClient({ url: env.redisUrl });
+    client = createClient({
+      url: env.redisUrl,
+      socket: { tls: env.redisUrl.startsWith('rediss://'), rejectUnauthorized: false },
+    });
     client.on('error', () => {});
   }
 
